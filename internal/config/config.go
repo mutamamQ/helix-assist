@@ -17,6 +17,10 @@ type Config struct {
 	AnthropicModel         string
 	AnthropicModelForChat  string
 	AnthropicEndpoint      string
+	BryantKey              string
+	BryantModel            string
+	BryantModelForChat     string
+	BryantEndpoint         string
 	Debounce               int
 	TriggerCharacters      []string
 	NumSuggestions         int
@@ -38,6 +42,9 @@ func DefaultConfig() *Config {
 		AnthropicModel:         "claude-haiku-4-5",
 		AnthropicModelForChat:  "claude-sonnet-4-5",
 		AnthropicEndpoint:      "https://api.anthropic.com",
+		BryantModel:            "15d8cc8844/CLAUDE_V5_5_SONNET",
+		BryantModelForChat:     "15d8cc8844/CLAUDE_V5_5_SONNET",
+		BryantEndpoint:         "http://127.0.0.1:8765/v1",
 		Debounce:               200,
 		TriggerCharacters:      []string{"{", "(", " "},
 		NumSuggestions:         1,
@@ -54,7 +61,7 @@ func Load() *Config {
 	cfg := DefaultConfig()
 
 	// Define flags
-	handler := flag.String("handler", getEnvOrDefault("HANDLER", cfg.Handler), "Provider: openai or anthropic")
+	handler := flag.String("handler", getEnvOrDefault("HANDLER", cfg.Handler), "Provider: openai, anthropic or bryant")
 	openaiKey := flag.String("openai-key", getEnvOrDefault("OPENAI_API_KEY", ""), "OpenAI API key")
 	openaiModel := flag.String("openai-model", getEnvOrDefault("OPENAI_MODEL", cfg.OpenAIModel), "OpenAI model")
 	openaiEndpoint := flag.String("openai-endpoint", getEnvOrDefault("OPENAI_ENDPOINT", cfg.OpenAIEndpoint), "OpenAI API endpoint")
@@ -63,6 +70,10 @@ func Load() *Config {
 	anthropicEndpoint := flag.String("anthropic-endpoint", getEnvOrDefault("ANTHROPIC_ENDPOINT", cfg.AnthropicEndpoint), "Anthropic API endpoint")
 	openaiModelForChat := flag.String("openai-model-for-chat", getEnvOrDefault("OPENAI_MODEL_FOR_CHAT", cfg.OpenAIModelForChat), "OpenAI model for chat actions (defaults to openai-model)")
 	anthropicModelForChat := flag.String("anthropic-model-for-chat", getEnvOrDefault("ANTHROPIC_MODEL_FOR_CHAT", cfg.AnthropicModelForChat), "Anthropic model for chat actions (defaults to anthropic-model)")
+	bryantKey := flag.String("bryant-key", getEnvOrDefault("BRYANT_API_KEY", ""), "BryantGPT local bridge key")
+	bryantModel := flag.String("bryant-model", getEnvOrDefault("BRYANT_MODEL", cfg.BryantModel), "BryantGPT model for completions")
+	bryantModelForChat := flag.String("bryant-model-for-chat", getEnvOrDefault("BRYANT_MODEL_FOR_CHAT", cfg.BryantModelForChat), "BryantGPT model for code actions")
+	bryantEndpoint := flag.String("bryant-endpoint", getEnvOrDefault("BRYANT_ENDPOINT", cfg.BryantEndpoint), "BryantGPT OpenAI-compatible endpoint")
 	debounce := flag.Int("debounce", getEnvOrDefaultInt("DEBOUNCE", cfg.Debounce), "Debounce delay (ms)")
 	triggerChars := flag.String("trigger-chars", getEnvOrDefault("TRIGGER_CHARACTERS", "{||(|| "), "Completion trigger characters (separated by ||)")
 	numSuggestions := flag.Int("num-suggestions", getEnvOrDefaultInt("NUM_SUGGESTIONS", cfg.NumSuggestions), "Number of suggestions")
@@ -85,6 +96,13 @@ func Load() *Config {
 	cfg.AnthropicModel = *anthropicModel
 	cfg.AnthropicModelForChat = *anthropicModelForChat
 	cfg.AnthropicEndpoint = *anthropicEndpoint
+	cfg.BryantKey = *bryantKey
+	cfg.BryantModel = *bryantModel
+	cfg.BryantModelForChat = *bryantModelForChat
+	cfg.BryantEndpoint = *bryantEndpoint
+	if cfg.BryantKey == "" {
+		cfg.BryantKey = readHermesEnvKey("BRYANT_API_KEY")
+	}
 	cfg.Debounce = *debounce
 	cfg.TriggerCharacters = strings.Split(*triggerChars, "||")
 	cfg.NumSuggestions = *numSuggestions
@@ -100,8 +118,12 @@ func Load() *Config {
 }
 
 func (c *Config) Validate() error {
-	if c.Handler != "openai" && c.Handler != "anthropic" {
-		return &ConfigError{Message: "handler must be 'openai' or 'anthropic'"}
+	if c.Handler != "openai" && c.Handler != "anthropic" && c.Handler != "bryant" {
+		return &ConfigError{Message: "handler must be 'openai', 'anthropic' or 'bryant'"}
+	}
+
+	if c.Handler == "bryant" && c.BryantKey == "" {
+		return &ConfigError{Message: "BRYANT_API_KEY is required when using bryant handler (env, --bryant-key, or ~/.hermes/.env)"}
 	}
 
 	if c.Handler == "openai" && c.OpenAIKey == "" {
@@ -146,4 +168,28 @@ func getEnvOrDefaultBool(key string, defaultValue bool) bool {
 		}
 	}
 	return defaultValue
+}
+
+// readHermesEnvKey falls back to the key stored in $HERMES_HOME/.env (default ~/.hermes/.env)
+// so Helix doesn't need the secret in languages.toml or the shell environment.
+func readHermesEnvKey(key string) string {
+	home := os.Getenv("HERMES_HOME")
+	if home == "" {
+		h, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		home = h + "/.hermes"
+	}
+	data, err := os.ReadFile(home + "/.env")
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "export "))
+		if strings.HasPrefix(line, key+"=") {
+			return strings.Trim(strings.TrimPrefix(line, key+"="), `"'`)
+		}
+	}
+	return ""
 }

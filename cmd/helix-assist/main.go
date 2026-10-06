@@ -62,6 +62,19 @@ func main() {
 		logger.Log("Registered Anthropic provider", "completion model:", cfg.AnthropicModel, "chat model:", chatModel)
 	}
 
+	if cfg.BryantKey != "" {
+		bryantProvider := providers.NewBryantProvider(
+			cfg.BryantKey,
+			cfg.BryantModel,
+			cfg.BryantModelForChat,
+			cfg.BryantEndpoint,
+			cfg.FetchTimeout,
+			logger,
+		)
+		registry.Register("bryant", bryantProvider)
+		logger.Log("Registered Bryant provider", "completion model:", cfg.BryantModel, "chat model:", cfg.BryantModelForChat)
+	}
+
 	if err := registry.SetCurrent(cfg.Handler); err != nil {
 		fmt.Fprintf(os.Stderr, "Provider error: %s\n", err.Error())
 		os.Exit(1)

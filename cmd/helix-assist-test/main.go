@@ -16,7 +16,7 @@ import (
 func main() {
 	testDir := flag.String("testdir", "", "Directory containing test files")
 	testFile := flag.String("file", "", "Single test file to run")
-	provider := flag.String("provider", "openai", "Provider to use (openai or anthropic)")
+	provider := flag.String("provider", "openai", "Provider to use (openai, anthropic or bryant)")
 	language := flag.String("language", "", "Filter tests by language (optional)")
 	numSuggestions := flag.Int("num-suggestions", 1, "Number of completions to request")
 	timeoutMs := flag.Int("timeout", 15000, "Completion timeout in milliseconds")
@@ -29,6 +29,10 @@ func main() {
 	anthropicKey := flag.String("anthropic-key", os.Getenv("ANTHROPIC_API_KEY"), "Anthropic API key")
 	anthropicModel := flag.String("anthropic-model", getEnvOrDefault("ANTHROPIC_MODEL", "claude-sonnet-4-5"), "Anthropic model")
 	anthropicEndpoint := flag.String("anthropic-endpoint", getEnvOrDefault("ANTHROPIC_ENDPOINT", "https://api.anthropic.com"), "Anthropic API endpoint")
+
+	bryantKey := flag.String("bryant-key", os.Getenv("BRYANT_API_KEY"), "BryantGPT local bridge key")
+	bryantModel := flag.String("bryant-model", getEnvOrDefault("BRYANT_MODEL", "15d8cc8844/CLAUDE_V5_5_SONNET"), "BryantGPT model")
+	bryantEndpoint := flag.String("bryant-endpoint", getEnvOrDefault("BRYANT_ENDPOINT", "http://127.0.0.1:8765/v1"), "BryantGPT endpoint")
 
 	flag.Parse()
 
@@ -44,8 +48,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	if *provider != "openai" && *provider != "anthropic" {
-		fmt.Fprintf(os.Stderr, "Error: Provider must be 'openai' or 'anthropic'\n")
+	if *provider != "openai" && *provider != "anthropic" && *provider != "bryant" {
+		fmt.Fprintf(os.Stderr, "Error: Provider must be 'openai', 'anthropic' or 'bryant'\n")
 		os.Exit(1)
 	}
 
@@ -62,6 +66,7 @@ func main() {
 		openaiProvider := providers.NewOpenAIProvider(
 			*openaiKey,
 			*openaiModel,
+			"",
 			*openaiEndpoint,
 			*timeoutMs,
 			logger,
@@ -79,12 +84,23 @@ func main() {
 		anthropicProvider := providers.NewAnthropicProvider(
 			*anthropicKey,
 			*anthropicModel,
+			"",
 			*anthropicEndpoint,
 			*timeoutMs,
 			logger,
 		)
 		registry.Register("anthropic", anthropicProvider)
 		if err := registry.SetCurrent("anthropic"); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	} else if *provider == "bryant" {
+		if *bryantKey == "" {
+			fmt.Fprintf(os.Stderr, "Error: BRYANT_API_KEY is required\n")
+			os.Exit(1)
+		}
+		registry.Register("bryant", providers.NewBryantProvider(*bryantKey, *bryantModel, "", *bryantEndpoint, *timeoutMs, logger))
+		if err := registry.SetCurrent("bryant"); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}

@@ -91,6 +91,27 @@ language-servers = ["typescript-language-server", "helix-assist"]
 name = "python"
 language-servers = ["pylsp", "helix-assist"]
 ```
+## BryantGPT (fork addition)
+
+This fork adds a `bryant` handler that talks to the local BryantGPT bridge
+(`bryant-provider`, OpenAI-compatible `/v1/chat/completions`).
+
+| Variable / flag | Default | Description |
+|---|---|---|
+| `HANDLER` / `--handler` | - | set to `bryant` |
+| `BRYANT_API_KEY` / `--bryant-key` | read from `~/.hermes/.env` | local bridge key |
+| `BRYANT_MODEL` / `--bryant-model` | `15d8cc8844/CLAUDE_V5_5_SONNET` | completion model |
+| `BRYANT_MODEL_FOR_CHAT` / `--bryant-model-for-chat` | `15d8cc8844/CLAUDE_V5_5_SONNET` | code-action model |
+| `BRYANT_ENDPOINT` / `--bryant-endpoint` | `http://127.0.0.1:8765/v1` | bridge URL |
+
+Faster alternatives for completions: `15d8cc8844/CLAUDE_V4_5_HAIKU`, `15d8cc8844/OPENAI_GPT6_LUNA`.
+
+```toml
+[language-server.helix-assist]
+command = "helix-assist"
+args = ["--handler", "bryant", "--num-suggestions", "2"]
+```
+
 ## Usage
 
 1. Start Helix and open a file
