@@ -71,14 +71,15 @@ func parseArgs(args []string) (o opts, err error) {
 		switch name {
 		case "--file":
 			o.file = next()
-			// Helix doesn't quote %{buffer_name}: glue following words while that names a real file.
-			for j := i + 1; j < len(args) && err == nil; j++ {
-				if _, e := os.Stat(o.file); e == nil {
-					break
-				}
-				if _, e := os.Stat(o.file + " " + args[j]); e == nil {
-					o.file += " " + args[j]
-					i = j
+			// Helix doesn't quote %{buffer_name}: glue following words until the path is a regular file.
+			if st, e := os.Stat(o.file); e != nil || st.IsDir() {
+				cand := o.file
+				for j := i + 1; j < len(args) && j < i+20; j++ {
+					cand += " " + args[j]
+					if st, e := os.Stat(cand); e == nil && !st.IsDir() {
+						o.file, i = cand, j
+						break
+					}
 				}
 			}
 		case "--lang":
@@ -116,6 +117,9 @@ func finish(out, in string) (string, error) {
 	code = assist.FixIndent(code, in)
 	if !strings.HasSuffix(in, "\n") {
 		code = strings.TrimSuffix(code, "\n")
+	}
+	if strings.Contains(in, "\r\n") { // keep CRLF buffers consistent
+		code = strings.ReplaceAll(strings.ReplaceAll(code, "\r\n", "\n"), "\n", "\r\n")
 	}
 	return code, nil
 }
@@ -187,9 +191,17 @@ func absOr(p string) string {
 	return p
 }
 
-func gitDiff() (string, error) {
+func gitDiff(file string) (string, error) {
+	var pre []string
+	if file != "" {
+		dir := filepath.Dir(absOr(file))
+		if filepath.Base(dir) == ".git" { // COMMIT_EDITMSG lives in .git
+			dir = filepath.Dir(dir)
+		}
+		pre = []string{"-C", dir}
+	}
 	for _, args := range [][]string{{"diff", "--staged"}, {"diff"}} {
-		out, err := exec.Command("git", args...).Output()
+		out, err := exec.Command("git", append(pre, args...)...).Output()
 		if err != nil {
 			return "", fmt.Errorf("git %s failed", args[0])
 		}
@@ -212,7 +224,7 @@ func run(args []string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	_, lines := readFile(o.file)
+	text, lines := readFile(o.file)
 	switch cmd {
 	case "edit":
 		if o.text == "" {
@@ -239,7 +251,10 @@ func run(args []string) (string, error) {
 		cur := max(o.line-1, 0)
 		base := ""
 		if cur < len(lines) {
-			base = lines[cur]
+			base = strings.TrimSuffix(lines[cur], "\r")
+		}
+		if strings.Contains(text, "\r\n") {
+			base += "\r"
 		}
 		user := fmt.Sprintf("Instruction: %s\n\n%s", o.text, fileContext(o, lines, cur, cur))
 		out, err := ask(o.model, "You write NEW code that will be inserted on new lines directly AFTER the marked line. Reply with ONLY the new code, indented correctly for that position: no markdown fences, no commentary, never repeat the marked line or other existing code.", user, 8000)
@@ -264,7 +279,7 @@ func run(args []string) (string, error) {
 		}
 		return tidyAnswer(out), nil
 	case "commit":
-		d, err := gitDiff()
+		d, err := gitDiff(o.file)
 		if err != nil {
 			return "", err
 		}

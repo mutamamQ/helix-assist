@@ -133,7 +133,9 @@ Off by default: an A/B test on 45 real completions showed no accuracy gain and ~
 
 ### hxai CLI (space-i keybinds)
 `hxai doc` prints keybinds for `~/.config/helix/config.toml`; type the instruction inside the
-prefilled quotes. `hxai keys` answers Helix keybinding questions from the embedded 25.07.1 docs.
+prefilled quotes (avoid `"`, `$` and backticks there: the shell runs them; use `'` instead; a
+shell syntax error is written into the buffer before hxai starts, `u` undoes it). Save the file first for best
+`g`/`a` context. `Space i l` shows the last errors. `hxai keys` answers Helix keybinding questions from the embedded 25.07.1 docs.
 Errors abort the edit (Helix shows "Shell command failed"); details in `~/.cache/hxai.log`.
 `make install-hxai` installs it.
 
