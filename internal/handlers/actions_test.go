@@ -75,15 +75,3 @@ func TestRelocate(t *testing.T) {
 		t.Error("changed target must not relocate")
 	}
 }
-
-func TestShiftIndent(t *testing.T) {
-	if got := shiftIndent("   a\n     b", "    x"); got != "    a\n      b" {
-		t.Errorf("%q", got)
-	}
-	if got := shiftIndent("a\n  b", "x"); got != "a\n  b" {
-		t.Errorf("%q", got)
-	}
-	if got := shiftIndent("  a\nb", "    x"); got != "  a\nb" { // first line not the shallowest
-		t.Errorf("%q", got)
-	}
-}

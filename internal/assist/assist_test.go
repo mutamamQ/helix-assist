@@ -32,7 +32,7 @@ func TestEnclosingBlockTopLevelParagraph(t *testing.T) {
 }
 
 func TestFindInstructions(t *testing.T) {
-	src := lines("x = 1\n    # ai: add retry\n// AI: make async\n-- ai> fix sql\ny = 'ai: not a comment'")
+	src := lines("x = 1\n    # ai: add retry\n// AI: make async\n-- ai> fix sql\ny = 'ai: not a comment'\n    \"ai: docstring line\"")
 	got := FindInstructions(src, 0, len(src)-1)
 	want := []string{"add retry", "make async", "fix sql"}
 	if len(got) != len(want) {
@@ -78,9 +78,32 @@ func TestFileWithMarkersWindow(t *testing.T) {
 	}
 }
 
-func TestStripPreamble(t *testing.T) {
-	if got := StripPreamble("Here you go:\n```go\nx := 1\n```\n"); got != "x := 1" {
-		t.Fatalf("got %q", got)
+func TestCleanReply(t *testing.T) {
+	ok := map[[2]string]string{
+		{"Here you go:\n```go\nx := 1\n```\n", "y"}:                      "x := 1",
+		{"```py\nx = 1\n```", "y"}:                                       "x = 1",
+		{"# Title\n```sh\nls -la\n```\nmore", "# Title\n```sh\nls\n```"}: "# Title\n```sh\nls -la\n```\nmore",
+		{"/// ```\n/// assert!(f())\n/// ```\nfn f() {}", "fn f() {}"}:   "/// ```\n/// assert!(f())\n/// ```\nfn f() {}",
+		{"    x = 1\n", "    y"}:                                         "    x = 1",
+	}
+	for in, want := range ok {
+		if got, err := CleanReply(in[0], in[1]); err != nil || got != want {
+			t.Errorf("CleanReply(%q)=%q,%v want %q", in[0], got, err, want)
+		}
+	}
+	for _, bad := range []string{"", "```\n```", "Sorry, I can't help with that request.", "I cannot do that"} {
+		if got, err := CleanReply(bad, "def f():\n    pass"); err == nil {
+			t.Errorf("CleanReply(%q) accepted: %q", bad, got)
+		}
+	}
+}
+
+func TestDuplicateTests(t *testing.T) {
+	if d := DuplicateTests("def test_f():\n    pass", "import x\n\ndef test_f():\n    assert 1"); d != "test_f" {
+		t.Fatalf("got %q", d)
+	}
+	if d := DuplicateTests("func TestB(t *testing.T) {}", "func TestA(t *testing.T) {}"); d != "" {
+		t.Fatalf("got %q", d)
 	}
 }
 

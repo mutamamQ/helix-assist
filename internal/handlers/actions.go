@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/leona/helix-assist/internal/assist"
@@ -44,6 +46,7 @@ const (
 	keyFixAll      = "fixAll"
 	keyInstruction = "instruction"
 	cmdPrefix      = "ai."
+	maxDiagEntries = 5
 )
 
 // CommandKeys lists every executeCommand name the server accepts.
@@ -77,6 +80,7 @@ type actionArgs struct {
 type ActionHandler struct {
 	cfg      *config.Config
 	registry *providers.Registry
+	inflight sync.Map // uri|kind|line -> struct{}: same action twice would double-apply
 }
 
 func NewActionHandler(cfg *config.Config, registry *providers.Registry) *ActionHandler {
@@ -140,6 +144,9 @@ func buildActions(lines []string, lang string, p lsp.CodeActionParams) []lsp.Cod
 	var out []lsp.CodeAction
 
 	for i, d := range p.Context.Diagnostics {
+		if i == maxDiagEntries {
+			break // ponytail: the rest are covered by "fix all"
+		}
 		a := base
 		a.Kind, a.Diagnostics = keyFix, diags[i:i+1]
 		t := "AI fix: " + truncate(d.Message, 60)
@@ -199,29 +206,6 @@ func lineEdit(lines []string, start, end int, text string) lsp.TextEdit {
 
 func indentLen(s string) int { return len(s) - len(strings.TrimLeft(s, " \t")) }
 
-// shiftIndent re-adds indentation the model/bridge trimmed: when the output's
-// first line is its least-indented one and is shallower than the original
-// first line, every line is shifted right by the difference.
-func shiftIndent(out, first string) string {
-	ls := strings.Split(out, "\n")
-	d := indentLen(first) - indentLen(ls[0])
-	if d <= 0 || strings.TrimSpace(ls[0]) == "" {
-		return out
-	}
-	for _, l := range ls[1:] {
-		if strings.TrimSpace(l) != "" && indentLen(l) < indentLen(ls[0]) {
-			return out
-		}
-	}
-	pad := first[:d+indentLen(ls[0])][indentLen(ls[0]):]
-	for i, l := range ls {
-		if strings.TrimSpace(l) != "" {
-			ls[i] = pad + l
-		}
-	}
-	return strings.Join(ls, "\n")
-}
-
 // relocate finds orig in lines (exact match), preferring the match closest to hint.
 func relocate(lines, orig []string, hint int) (int, bool) {
 	best := -1
@@ -238,6 +222,14 @@ func abs(n int) int {
 		return -n
 	}
 	return n
+}
+
+func stripCR(lines []string) []string {
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		out[i] = strings.TrimSuffix(l, "\r")
+	}
+	return out
 }
 
 func uriPath(uri string) string {
@@ -305,6 +297,10 @@ func (h *ActionHandler) run(svc *lsp.Service, a actionArgs, cmd string) error {
 	}
 	text, version, lang := buf.Text, buf.Version, buf.LanguageID
 	lines := strings.Split(text, "\n")
+	eol := "\n"
+	if strings.Contains(text, "\r\n") {
+		eol = "\r\n"
+	}
 	s, e := targetLines(lines, a.Range)
 	switch a.Kind {
 	case keyInstruction:
@@ -317,8 +313,14 @@ func (h *ActionHandler) run(svc *lsp.Service, a actionArgs, cmd string) error {
 			}
 		}
 	}
+	key := fmt.Sprintf("%s|%s|%s|%d", a.URI, a.Kind, a.Instruction, s)
+	if _, busy := h.inflight.LoadOrStore(key, struct{}{}); busy {
+		return fmt.Errorf("that action is already running")
+	}
+	defer h.inflight.Delete(key)
 	orig := lines[s : e+1]
-	origText := strings.Join(orig, "\n")
+	clean := stripCR(lines) // prompt/model see LF-only text
+	origText := strings.Join(clean[s:e+1], "\n")
 
 	var task, system string
 	var deep = a.Deep
@@ -357,14 +359,18 @@ func (h *ActionHandler) run(svc *lsp.Service, a actionArgs, cmd string) error {
 	var testPath, testText string
 	if a.Kind == "tests" {
 		testPath = assist.TestPath(path, lang)
-		if data, err := os.ReadFile(testPath); err == nil {
+		if tb, ok := svc.Buffers.Get(pathURI(testPath)); ok { // open buffer may hold unsaved edits
+			testText = tb.Text
+		} else if data, err := os.ReadFile(testPath); err == nil {
 			testText = string(data)
+		}
+		if testText != "" {
 			fmt.Fprintf(&u, "\nTask: write tests for the target code. Existing test file %s (append new tests only):\n%s\n", testPath, testText)
 		} else {
 			fmt.Fprintf(&u, "\nTask: write tests for the target code. Test file %s does not exist yet; output the complete file.\n", testPath)
 		}
 	}
-	fmt.Fprintf(&u, "\nFull file with target:\n%s", assist.FileWithMarkers(lines, s, e))
+	fmt.Fprintf(&u, "\nFull file with target:\n%s", assist.FileWithMarkers(clean, s, e))
 
 	var progress *util.ProgressIndicator
 	if h.cfg.EnableProgressSpinner {
@@ -387,9 +393,21 @@ func (h *ActionHandler) run(svc *lsp.Service, a actionArgs, cmd string) error {
 
 	switch a.Kind {
 	case "explain":
-		return h.openNew(svc, filepath.Join(os.TempDir(), "helix-assist", "explain-"+filepath.Base(path)+".md"), resp+"\n", true, cmd)
+		dir, err := os.UserCacheDir()
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256([]byte(path))
+		name := fmt.Sprintf("explain-%x-%s.md", sum[:4], filepath.Base(path)) // unique per source path
+		return h.openNew(svc, filepath.Join(dir, "helix-assist", name), resp+"\n", true, cmd, "")
 	case "tests":
-		code := providers.CleanCodeOutput(assist.StripPreamble(resp))
+		code, err := assist.CleanReply(resp, "")
+		if err != nil {
+			return err
+		}
+		if dup := assist.DuplicateTests(code, testText); dup != "" {
+			return fmt.Errorf("model re-wrote existing test %s; nothing appended", dup)
+		}
 		if testText != "" {
 			code = "\n" + strings.TrimRight(code, "\n") + "\n"
 			if !strings.HasSuffix(testText, "\n") {
@@ -398,11 +416,12 @@ func (h *ActionHandler) run(svc *lsp.Service, a actionArgs, cmd string) error {
 		} else {
 			code = strings.TrimRight(code, "\n") + "\n"
 		}
-		return h.openNew(svc, testPath, code, false, cmd)
+		return h.openNew(svc, testPath, code, false, cmd, testText)
 	}
 
 	// stale-edit guard
 	if cur, ok := svc.Buffers.Get(a.URI); ok && cur.Version != version {
+		version = cur.Version
 		lines = strings.Split(cur.Text, "\n")
 		ns, found := relocate(lines, orig, s)
 		if !found {
@@ -410,11 +429,19 @@ func (h *ActionHandler) run(svc *lsp.Service, a actionArgs, cmd string) error {
 		}
 		s, e = ns, ns+len(orig)-1
 	}
-	out := assist.FixIndent(shiftIndent(providers.CleanCodeOutput(assist.StripPreamble(resp)), orig[0]), origText)
+	code, err := assist.CleanReply(resp, origText)
+	if err != nil {
+		return err
+	}
+	out := strings.ReplaceAll(assist.FixIndent(code, origText), "\n", eol)
 	edit := lineEdit(lines, s, e, out)
+	if eol == "\r\n" && e+1 >= len(lines) {
+		edit.NewText = strings.TrimSuffix(out, eol)
+	}
 	svc.SendRequest(lsp.EventApplyEdit, lsp.ApplyWorkspaceEditParams{
 		Label: cmd,
-		Edit:  lsp.WorkspaceEdit{DocumentChanges: []any{lsp.TextDocumentEdit{TextDocument: lsp.OptionalVersionedTextDocumentIdentifier{URI: a.URI}, Edits: []lsp.TextEdit{edit}}}},
+		// version lets Helix itself reject the edit if the buffer moved on since we read it
+		Edit: lsp.WorkspaceEdit{DocumentChanges: []any{lsp.TextDocumentEdit{TextDocument: lsp.OptionalVersionedTextDocumentIdentifier{URI: a.URI, Version: &version}, Edits: []lsp.TextEdit{edit}}}},
 	})
 	return nil
 }
@@ -428,13 +455,12 @@ func endOf(text string) lsp.Position {
 // openNew writes content to path through workspace/applyEdit (creating the
 // file; overwrite replaces it, otherwise content is appended) and shows it in
 // a split.
-func (h *ActionHandler) openNew(svc *lsp.Service, path, content string, overwrite bool, label string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+func (h *ActionHandler) openNew(svc *lsp.Service, path, content string, overwrite bool, label, old string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	old, _ := os.ReadFile(path)
 	uri := pathURI(path)
-	rng := lsp.Range{Start: endOf(string(old)), End: endOf(string(old))}
+	rng := lsp.Range{Start: endOf(old), End: endOf(old)}
 	if overwrite {
 		rng.Start = lsp.Position{}
 	}

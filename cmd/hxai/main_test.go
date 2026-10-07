@@ -29,7 +29,7 @@ func TestParseArgs(t *testing.T) {
 	if err != nil || o.file != spaced || o.text != "add types" {
 		t.Fatalf("spaced path: %+v %v", o, err)
 	}
-	if _, err := nonEmpty(" \n"); err == nil {
+	if _, err := finish(" \n", "x\n"); err == nil {
 		t.Fatal("blank reply accepted")
 	}
 }
@@ -40,7 +40,7 @@ func TestFinishNewline(t *testing.T) {
 		{"x = 1\n", "y = 2\n", "x = 1\n"},
 		{"a\nb", "    a\n    b", "    a\n    b"},
 	} {
-		if got := finish(c.out, c.in); got != c.want {
+		if got, _ := finish(c.out, c.in); got != c.want {
 			t.Errorf("finish(%q,%q)=%q want %q", c.out, c.in, got, c.want)
 		}
 	}
