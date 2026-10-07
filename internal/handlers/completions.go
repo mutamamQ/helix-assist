@@ -180,7 +180,7 @@ func (h *CompletionHandler) buildCompletionItem(hint string, content util.Conten
 
 	lines := strings.Split(hint, "\n")
 	cleanLine := position.Line + len(lines) - 1
-	cleanCharacter := len(lines[len(lines)-1])
+	cleanCharacter := assist.UTF16Len(lines[len(lines)-1]) // LSP columns are UTF-16
 
 	if cleanLine == position.Line {
 		cleanCharacter += position.Character
@@ -201,7 +201,7 @@ func (h *CompletionHandler) buildCompletionItem(hint string, content util.Conten
 		additionalEdits = append(additionalEdits, lsp.TextEdit{
 			Range: lsp.Range{
 				Start: lsp.Position{Line: cleanLine, Character: cleanCharacter},
-				End:   lsp.Position{Line: cleanLine, Character: cleanCharacter + overlapLen},
+				End:   lsp.Position{Line: cleanLine, Character: cleanCharacter + assist.UTF16Len(content.ContentImmediatelyAfter[:overlapLen])},
 			},
 			NewText: "",
 		})

@@ -86,13 +86,17 @@ func RelatedFiles(path, languageID, text string) []RelatedFile {
 	}
 
 	self, _ := filepath.Abs(path)
+	root, _ := filepath.Abs(ProjectRoot(dir))
 	seen := map[string]bool{self: true}
 	var out []RelatedFile
 	total := 0
 	for _, c := range cands {
 		abs, err := filepath.Abs(c)
-		if err != nil || seen[abs] {
+		if err != nil || seen[abs] || strings.HasPrefix(filepath.Base(abs), ".") {
 			continue
+		}
+		if r, e := filepath.Rel(root, abs); e != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+			continue // never send files outside the project
 		}
 		st, err := os.Stat(abs)
 		if err != nil || st.IsDir() {

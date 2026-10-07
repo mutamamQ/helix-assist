@@ -192,7 +192,20 @@ func (s *Service) emit(method string, msg *JSONRPCMessage) {
 	handlers := s.handlers[method]
 	s.mu.RUnlock()
 
+	// Document sync must apply in order; everything else runs concurrently.
+	sync := method == EventDidOpen || method == EventDidChange
 	for _, handler := range handlers {
+		if sync {
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						s.Logger.Log("handler panic:", method, r)
+					}
+				}()
+				handler(s, msg)
+			}()
+			continue
+		}
 		go func(h EventHandler) {
 			defer func() {
 				if r := recover(); r != nil {

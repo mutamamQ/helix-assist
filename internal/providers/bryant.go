@@ -69,6 +69,9 @@ func (p *BryantProvider) Completion(ctx context.Context, req CompletionRequest, 
 	if numSuggestions < 1 {
 		numSuggestions = 1
 	}
+	// As before Raw() existed: completions are bounded by fetch-timeout too.
+	ctx, cancel := context.WithTimeout(ctx, p.timeout)
+	defer cancel()
 	system := BuildCompletionSystemPrompt(languageID)
 	user := BuildCompletionPrompt(filepath, req)
 

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf16"
 
 	"github.com/leona/helix-assist/internal/assist"
 	"github.com/leona/helix-assist/internal/config"
@@ -121,13 +123,47 @@ func command(title, key string, a actionArgs) *lsp.Command {
 
 const maxBlockLines, windowLines = 400, 200
 
+// isCursor reports whether r is Helix's bare block cursor: one grapheme on a
+// line (emoji/ZWJ sequences span several UTF-16 units) or the line's newline.
+func isCursor(lines []string, r lsp.Range) bool {
+	if r.Start.Line >= len(lines) {
+		return r.Start == r.End
+	}
+	line := []rune(lines[r.Start.Line])
+	if r.End.Line == r.Start.Line+1 && r.End.Character == 0 {
+		n := assist.UTF16Len(string(line))
+		return r.Start.Character > 0 && r.Start.Character >= n // cursor on the newline
+	}
+	if r.End.Line != r.Start.Line {
+		return false
+	}
+	// collect runes between the UTF-16 columns
+	var sel []rune
+	col := 0
+	for _, c := range line {
+		w := len(utf16.Encode([]rune{c}))
+		if col >= r.Start.Character && col+w <= r.End.Character {
+			sel = append(sel, c)
+		}
+		col += w
+	}
+	base := 0
+	for i, c := range sel {
+		joined := i > 0 && sel[i-1] == '\u200d'
+		if c != '\u200d' && !joined && !unicode.Is(unicode.Mn, c) && !unicode.Is(unicode.Me, c) && !(c >= 0xFE00 && c <= 0xFE0F) && !(c >= 0x1F3FB && c <= 0x1F3FF) {
+			base++
+		}
+	}
+	return base <= 1
+}
+
 // targetLines returns the 0-based inclusive lines an action applies to: the
 // selected lines, or the enclosing block for a bare cursor (range of at most
 // one character on one line). The result always contains the cursor line.
 func targetLines(lines []string, r lsp.Range) (int, int) {
 	last := max(len(lines)-1, 0)
 	s, e := min(r.Start.Line, last), min(r.End.Line, last)
-	if r.Start.Line != r.End.Line || r.End.Character-r.Start.Character > 1 {
+	if !isCursor(lines, r) {
 		if r.End.Character == 0 && e > s {
 			e-- // linewise selection ends at column 0 of the next line
 		}
@@ -224,22 +260,19 @@ func lineEdit(lines []string, start, end int, text string) lsp.TextEdit {
 
 func indentLen(s string) int { return len(s) - len(strings.TrimLeft(s, " \t")) }
 
-// relocate finds orig in lines (exact match), preferring the match closest to hint.
+// relocate finds orig in lines (exact match). Ambiguous (repeated) targets
+// are refused: guessing could edit the wrong copy.
 func relocate(lines, orig []string, hint int) (int, bool) {
-	best := -1
+	found := -1
 	for i := 0; i+len(orig) <= len(lines); i++ {
-		if slices.Equal(lines[i:i+len(orig)], orig) && (best < 0 || abs(i-hint) < abs(best-hint)) {
-			best = i
+		if slices.Equal(lines[i:i+len(orig)], orig) {
+			if found >= 0 {
+				return -1, false
+			}
+			found = i
 		}
 	}
-	return best, best >= 0
-}
-
-func abs(n int) int {
-	if n < 0 {
-		return -n
-	}
-	return n
+	return found, found >= 0
 }
 
 func stripCR(lines []string) []string {

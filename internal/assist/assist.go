@@ -67,7 +67,7 @@ func indentOf(s string) int {
 
 func isBlank(s string) bool { return strings.TrimSpace(s) == "" }
 
-var headerRe = regexp.MustCompile(`^\s*(export\s+)?(pub(\([^)]*\))?\s+)?(async\s+)?(def|class|func|function|fn|impl|struct|enum|interface|trait|type|module|object|const\s+\w+\s*=\s*(async\s*)?\(|let\s+\w+\s*=\s*(async\s*)?\(|(public|private|protected|static)\b)`)
+var headerRe = regexp.MustCompile(`^\s*(export\s+)?(pub(\([^)]*\))?\s+)?(async\s+)?((def|class|func|function|fn|impl|struct|enum|interface|trait|type|module|object)\b|const\s+\w+\s*=\s*(async\s*)?\(|let\s+\w+\s*=\s*(async\s*)?\(|(public|private|protected|static)\b)`)
 
 // IsHeader reports whether a line looks like the start of a definition.
 func IsHeader(s string) bool { return headerRe.MatchString(s) }
@@ -294,9 +294,11 @@ func CleanReply(reply, original string) (string, error) {
 	return t, nil
 }
 
-var proseRe = regexp.MustCompile(`^\s*(?i:sorry\b|i can(?:no|')?t\b|i'm (?:sorry|unable)\b|i am (?:sorry|unable)\b|as an ai\b|unfortunately\b|here(?: is|'s| you go| are)\b|sure[,!.]|certainly[,!.]|of course[,!.])`)
+// Openers only count as prose when followed by prose-ish text, so code like
+// sure.expect(x), sorry(user) or "sure, rest = split(x)" is not rejected.
+var proseRe = regexp.MustCompile(`^\s*(?i:sorry(?:[,.!]|\s+(?:i|but|for|about|that|,))|i can(?:no|')?t\s|i'm (?:sorry|unable)\b|i am (?:sorry|unable)\b|as an ai\b|unfortunately[,\s]|here(?: is|'s| you go| are)[\s:,!.]|(?:sure|certainly|of course)(?:[!.](?:\s|$)|,\s+(?:here|i|this|that|the|let)\b))`)
 
-var testNameRe = regexp.MustCompile(`(?m)^\s*(?:async\s+)?(?:def|func|fn|function|it|test)\s*\(?\s*['"]?(Test\w*|test\w*)`)
+var testNameRe = regexp.MustCompile(`(?m)^\s*(?:async\s+)?(?:def|func|fn|function)\s+(Test\w*|test\w*)`)
 
 // testDescRe matches JS/TS it/test/describe calls with a quoted description.
 var testDescRe = regexp.MustCompile("(?m)^\\s*(?:it|test|describe)(?:\\.\\w+)?\\s*\\(\\s*(?:'([^']+)'|\"([^\"]+)\"|`([^`]+)`)")
