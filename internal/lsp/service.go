@@ -309,6 +309,9 @@ func (s *Service) Reply(id *int, result any) {
 	if id == nil {
 		return
 	}
+	if result == nil {
+		result = json.RawMessage("null") // omitempty would drop the result field
+	}
 	s.Send(&JSONRPCMessage{ID: id, Result: result})
 }
 
@@ -368,6 +371,9 @@ func (s *Service) Start() error {
 			s.Logger.Log("received:", string(content))
 		}
 
+		if msg.Method == "" { // response to one of our server->client requests
+			continue
+		}
 		s.emit(msg.Method, &msg)
 	}
 }
