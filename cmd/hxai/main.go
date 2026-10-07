@@ -339,6 +339,8 @@ func main() {
 	}
 	msg := "hxai: " + strings.Join(strings.Fields(err.Error()), " ")
 	if len(os.Args) > 1 && popupCmds[os.Args[1]] {
+		// :sh drops stdout on a non-zero exit (shell_impl bails), so the popup
+		// needs exit 0; the "hxai:" prefix marks it as an error.
 		fmt.Println(msg)
 		return
 	}

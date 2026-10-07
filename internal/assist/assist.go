@@ -210,18 +210,64 @@ func InstructionTarget(lines []string, commentLine int) (int, int) {
 // base indentation, and normalises the trailing newline.
 func FixIndent(out, original string) string {
 	out = strings.TrimRight(out, " \t\n")
-	origMin := minIndent(original)
-	outMin := minIndent(out)
-	if origMin != "" && outMin == "" {
+	if d := lostMargin(out, original); d != "" {
 		ls := strings.Split(out, "\n")
 		for i, l := range ls {
 			if !isBlank(l) {
-				ls[i] = origMin + l
+				ls[i] = d + l
 			}
 		}
 		out = strings.Join(ls, "\n")
 	}
 	return out + "\n"
+}
+
+// lostMargin returns the indentation the reply dropped, judged by lines that
+// appear in both texts: if they are consistently shallower by the same prefix
+// the reply lost the target's margin. Without shared lines, fall back to
+// "every reply line at column 0 while the original was indented".
+func lostMargin(out, original string) string {
+	orig := map[string]string{}
+	for _, l := range strings.Split(original, "\n") {
+		if t := strings.TrimSpace(l); t != "" {
+			if _, dup := orig[t]; !dup {
+				orig[t] = l[:indentOf(l)]
+			}
+		}
+	}
+	margin, seen := "", false
+	for _, l := range strings.Split(out, "\n") {
+		t := strings.TrimSpace(l)
+		oi, ok := orig[t]
+		if t == "" || !ok {
+			continue
+		}
+		ri := l[:indentOf(l)]
+		if !strings.HasSuffix(oi, ri) {
+			return "" // deeper than the original: don't touch
+		}
+		d := oi[:len(oi)-len(ri)]
+		if seen && d != margin {
+			return "" // inconsistent: leave as is
+		}
+		margin, seen = d, true
+	}
+	if seen {
+		return margin
+	}
+	if m := minIndent(original); m != "" && !anyIndented(out) {
+		return m
+	}
+	return ""
+}
+
+func anyIndented(text string) bool {
+	for _, l := range strings.Split(text, "\n") {
+		if !isBlank(l) && indentOf(l) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func minIndent(text string) string {
