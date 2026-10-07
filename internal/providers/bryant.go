@@ -69,7 +69,7 @@ func (p *BryantProvider) Completion(ctx context.Context, req CompletionRequest, 
 		numSuggestions = 1
 	}
 	system := BuildCompletionSystemPrompt(languageID)
-	user := BuildCompletionUserPrompt(filepath, req.ContentBefore, req.ContentAfter)
+	user := BuildCompletionPrompt(filepath, req)
 
 	temp := 0.0
 	if numSuggestions > 1 {

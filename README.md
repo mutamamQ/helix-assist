@@ -126,6 +126,11 @@ target is the enclosing function/class; otherwise the selected lines.
   edits are versioned, the same action can't run twice at once. Undo with `u`.
 - Optional project notes: put `.helix-assist.md` in the repo (conventions, libraries); it's sent with every action.
 
+### Autocomplete project context (opt-in)
+`--completion-context` (or `COMPLETION_CONTEXT=true`) also sends `.helix-assist.md` and up to 4 local
+files the current file imports (Python, JS/TS relative imports, Go same-package files; ~20KB cap).
+Off by default: an A/B test on 45 real completions showed no accuracy gain and ~7% more latency.
+
 ### hxai CLI (space-i keybinds)
 `hxai doc` prints keybinds for `~/.config/helix/config.toml`; type the instruction inside the
 prefilled quotes. `hxai keys` answers Helix keybinding questions from the embedded 25.07.1 docs.

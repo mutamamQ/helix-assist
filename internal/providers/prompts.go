@@ -26,6 +26,15 @@ Completion style:
 - When completing control structures that are NOT yet closed in the after-cursor code, provide complete blocks with braces`, languageID, languageID)
 }
 
+// BuildCompletionPrompt is BuildCompletionUserPrompt plus optional context.
+func BuildCompletionPrompt(filepath string, req CompletionRequest) string {
+	p := BuildCompletionUserPrompt(filepath, req.ContentBefore, req.ContentAfter)
+	if req.Context == "" {
+		return p
+	}
+	return "Reference context (do NOT complete this, it only shows what the current file can use):\n\n" + req.Context + "---\n\n" + p
+}
+
 func BuildCompletionUserPrompt(filepath, contentBefore, contentAfter string) string {
 	return fmt.Sprintf(`File: %s
 

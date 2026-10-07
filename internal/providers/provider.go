@@ -9,6 +9,7 @@ import (
 type CompletionRequest struct {
 	ContentBefore string
 	ContentAfter  string
+	Context       string // optional project notes / related files, prepended to the prompt
 }
 
 type ChatResponse struct {

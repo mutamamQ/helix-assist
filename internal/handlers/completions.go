@@ -3,9 +3,11 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"net/url"
 	"strings"
 	"time"
 
+	"github.com/leona/helix-assist/internal/assist"
 	"github.com/leona/helix-assist/internal/config"
 	"github.com/leona/helix-assist/internal/lsp"
 	"github.com/leona/helix-assist/internal/providers"
@@ -100,10 +102,16 @@ func (h *CompletionHandler) doCompletion(svc *lsp.Service, msg *lsp.JSONRPCMessa
 		}
 	}
 
-	hints, err := h.registry.Completion(ctx, providers.CompletionRequest{
+	req := providers.CompletionRequest{
 		ContentBefore: content.ContentBefore,
 		ContentAfter:  contentAfter,
-	}, params.TextDocument.URI, buffer.LanguageID, h.cfg.NumSuggestions)
+	}
+	if h.cfg.CompletionContext {
+		if u, err := url.Parse(params.TextDocument.URI); err == nil && u.Scheme == "file" {
+			req.Context = assist.CompletionContext(u.Path, buffer.LanguageID, buffer.Text)
+		}
+	}
+	hints, err := h.registry.Completion(ctx, req, params.TextDocument.URI, buffer.LanguageID, h.cfg.NumSuggestions)
 
 	if err != nil {
 		svc.Logger.Log("completion error:", err.Error())
