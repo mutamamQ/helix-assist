@@ -345,6 +345,9 @@ func main() {
 	// Helix 25.07.1 :pipe/:insert-output insert stderr INTO the buffer, but a
 	// non-zero exit with empty stderr aborts the edit. So: log, keep stderr empty.
 	if dir, e := os.UserCacheDir(); e == nil {
+		if st, e := os.Stat(filepath.Join(dir, "hxai.log")); e == nil && st.Size() > 1<<20 {
+			os.Truncate(filepath.Join(dir, "hxai.log"), 0) // ponytail: size cap, no rotation
+		}
 		if f, e := os.OpenFile(filepath.Join(dir, "hxai.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); e == nil {
 			fmt.Fprintf(f, "%s %s\n", time.Now().Format(time.RFC3339), msg)
 			f.Close()

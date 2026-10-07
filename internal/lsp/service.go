@@ -51,7 +51,12 @@ func NewLogger(path string) *Logger {
 			return l
 		}
 
-		f, err := os.OpenFile(expandedPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+		// Append: several Helix sessions may share this file (O_TRUNC left NUL holes).
+		// ponytail: crude size cap instead of rotation.
+		if st, err := os.Stat(expandedPath); err == nil && st.Size() > 5<<20 {
+			os.Truncate(expandedPath, 0)
+		}
+		f, err := os.OpenFile(expandedPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 
 		if err == nil {
 			l.file = f
@@ -95,6 +100,7 @@ type Service struct {
 	mu           sync.RWMutex
 	stdin        io.Reader
 	stdout       io.Writer
+	StartupError string // shown in Helix instead of the "started" message
 	nextID       int
 }
 
@@ -125,6 +131,10 @@ func (s *Service) registerDefaultHandlers() {
 
 	s.On(EventInitialized, func(svc *Service, msg *JSONRPCMessage) {
 		svc.Logger.Log("received initialized notification")
+		if svc.StartupError != "" {
+			svc.SendShowMessage(MessageTypeError, "helix-assist: "+svc.StartupError)
+			return
+		}
 		svc.SendShowMessage(MessageTypeInfo, "helix-assist ("+svc.Version+") has started")
 	})
 

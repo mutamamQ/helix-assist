@@ -19,6 +19,10 @@ func main() {
 
 	if err := cfg.Validate(); err != nil {
 		fmt.Fprintf(os.Stderr, "Configuration error: %s\n", err.Error())
+		// Stay up so Helix shows the reason instead of silently doing nothing.
+		svc := lsp.NewService(lsp.ServerCapabilities{TextDocumentSync: 1}, lsp.NewLogger(""), Version)
+		svc.StartupError = "configuration error: " + err.Error()
+		svc.Start()
 		os.Exit(1)
 	}
 

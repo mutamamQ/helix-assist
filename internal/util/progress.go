@@ -18,6 +18,8 @@ type ProgressIndicator struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
 	startTime      time.Time
+	done           chan struct{}
+	shown          bool
 	mu             sync.Mutex
 }
 
@@ -38,6 +40,7 @@ func (p *ProgressIndicator) Start() {
 	p.mu.Lock()
 	p.ctx, p.cancel = context.WithCancel(context.Background())
 	p.startTime = time.Now()
+	p.done = make(chan struct{})
 	p.mu.Unlock()
 
 	go p.animate()
@@ -49,18 +52,24 @@ func (p *ProgressIndicator) Stop() {
 	}
 
 	p.mu.Lock()
-
-	if p.cancel != nil {
-		p.cancel()
-		p.cancel = nil
-	}
-
+	cancel, done := p.cancel, p.done
+	p.cancel = nil
 	p.mu.Unlock()
+	if cancel == nil {
+		return
+	}
+	cancel()
+	<-done // no frame can be sent after this point
+	if p.shown {
+		// replace the last frame, otherwise it stays on the statusline looking hung
+		p.svc.SendShowMessage(lsp.MessageTypeInfo, fmt.Sprintf(" done (%s)", p.formatElapsed(time.Since(p.startTime))))
+	}
 }
 
 func (p *ProgressIndicator) animate() {
 	ticker := time.NewTicker(p.updateInterval)
 	defer ticker.Stop()
+	defer close(p.done)
 
 	frameIndex := 0
 
@@ -73,6 +82,7 @@ func (p *ProgressIndicator) animate() {
 			message := fmt.Sprintf(" %s (%s)", p.spinnerFrames[frameIndex], p.formatElapsed(elapsed))
 
 			p.svc.SendShowMessage(lsp.MessageTypeInfo, message)
+			p.shown = true
 
 			frameIndex = (frameIndex + 1) % len(p.spinnerFrames)
 		}

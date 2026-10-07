@@ -115,16 +115,8 @@ func (h *CompletionHandler) doCompletion(svc *lsp.Service, msg *lsp.JSONRPCMessa
 
 	if err != nil {
 		svc.Logger.Log("completion error:", err.Error())
-		svc.SendDiagnostics([]lsp.Diagnostic{
-			{
-				Message:  err.Error(),
-				Severity: lsp.SeverityError,
-				Range: lsp.Range{
-					Start: lsp.Position{Line: params.Position.Line, Character: 0},
-					End:   lsp.Position{Line: params.Position.Line + 1, Character: 0},
-				},
-			},
-		}, 0)
+		// statusline, not a diagnostic: diagnostics stick and would show up as "AI fix:" entries
+		svc.SendShowMessage(lsp.MessageTypeError, "helix-assist: "+err.Error())
 		return
 	}
 
