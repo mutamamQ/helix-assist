@@ -119,18 +119,35 @@ func command(title, key string, a actionArgs) *lsp.Command {
 	return &lsp.Command{Title: title, Command: cmdPrefix + key, Arguments: []any{a}}
 }
 
+const maxBlockLines, windowLines = 400, 200
+
 // targetLines returns the 0-based inclusive lines an action applies to: the
-// selected lines, or the enclosing block when nothing (or one line) is selected.
+// selected lines, or the enclosing block for a bare cursor (range of at most
+// one character on one line). The result always contains the cursor line.
 func targetLines(lines []string, r lsp.Range) (int, int) {
-	s, e := r.Start.Line, r.End.Line
-	if r.End.Character == 0 && e > s {
-		e--
-	}
-	if s == e {
-		return assist.EnclosingBlock(lines, s)
-	}
 	last := max(len(lines)-1, 0)
-	return min(s, last), min(e, last)
+	s, e := min(r.Start.Line, last), min(r.End.Line, last)
+	if r.Start.Line != r.End.Line || r.End.Character-r.Start.Character > 1 {
+		if r.End.Character == 0 && e > s {
+			e-- // linewise selection ends at column 0 of the next line
+		}
+		return s, e
+	}
+	bs, be := assist.EnclosingBlock(lines, s)
+	if be-bs+1 <= maxBlockLines || bs > s || be < s {
+		return bs, be
+	}
+	// huge block: window of the cursor's paragraph, at most windowLines long
+	ps, pe := s, s
+	for ps > bs && strings.TrimSpace(lines[ps-1]) != "" {
+		ps--
+	}
+	for pe < be && strings.TrimSpace(lines[pe+1]) != "" {
+		pe++
+	}
+	ws := max(ps, s-windowLines/2)
+	we := min(pe, ws+windowLines-1)
+	return max(ps, we-windowLines+1), we
 }
 
 // buildActions makes the context-aware menu for the cursor/selection.
@@ -167,6 +184,7 @@ func buildActions(lines []string, lang string, p lsp.CodeActionParams) []lsp.Cod
 		s, e := targetLines(lines, p.Range)
 		found := assist.FindInstructions(lines, s, e)
 		cur := min(p.Range.Start.Line, len(lines)-1)
+		found = append(found, assist.LeadingInstructions(lines, s)...)
 		for _, c := range assist.FindInstructions(lines, cur, cur) {
 			if !slices.ContainsFunc(found, func(f assist.CommentInstruction) bool { return f.Line == c.Line }) {
 				found = append(found, c)
@@ -359,11 +377,7 @@ func (h *ActionHandler) run(svc *lsp.Service, a actionArgs, cmd string) error {
 	var testPath, testText string
 	if a.Kind == "tests" {
 		testPath = assist.TestPath(path, lang)
-		if tb, ok := svc.Buffers.Get(pathURI(testPath)); ok { // open buffer may hold unsaved edits
-			testText = tb.Text
-		} else if data, err := os.ReadFile(testPath); err == nil {
-			testText = string(data)
-		}
+		testText, _, _ = currentText(svc, testPath)
 		if testText != "" {
 			fmt.Fprintf(&u, "\nTask: write tests for the target code. Existing test file %s (append new tests only):\n%s\n", testPath, testText)
 		} else {
@@ -399,24 +413,26 @@ func (h *ActionHandler) run(svc *lsp.Service, a actionArgs, cmd string) error {
 		}
 		sum := sha256.Sum256([]byte(path))
 		name := fmt.Sprintf("explain-%x-%s.md", sum[:4], filepath.Base(path)) // unique per source path
-		return h.openNew(svc, filepath.Join(dir, "helix-assist", name), resp+"\n", true, cmd, "")
+		return h.openNew(svc, filepath.Join(dir, "helix-assist", name), resp+"\n", true, cmd)
 	case "tests":
 		code, err := assist.CleanReply(resp, "")
 		if err != nil {
 			return err
 		}
-		if dup := assist.DuplicateTests(code, testText); dup != "" {
+		// the destination may have been edited while the model ran: use its current text
+		cur, _, _ := currentText(svc, testPath)
+		if dup := assist.DuplicateTests(code, cur); dup != "" {
 			return fmt.Errorf("model re-wrote existing test %s; nothing appended", dup)
 		}
-		if testText != "" {
+		if cur != "" {
 			code = "\n" + strings.TrimRight(code, "\n") + "\n"
-			if !strings.HasSuffix(testText, "\n") {
+			if !strings.HasSuffix(cur, "\n") {
 				code = "\n" + code
 			}
 		} else {
 			code = strings.TrimRight(code, "\n") + "\n"
 		}
-		return h.openNew(svc, testPath, code, false, cmd, testText)
+		return h.openNew(svc, testPath, code, false, cmd)
 	}
 
 	// stale-edit guard
@@ -452,25 +468,37 @@ func endOf(text string) lsp.Position {
 	return lsp.Position{Line: len(ls) - 1, Character: assist.UTF16Len(ls[len(ls)-1])}
 }
 
-// openNew writes content to path through workspace/applyEdit (creating the
-// file; overwrite replaces it, otherwise content is appended) and shows it in
-// a split.
-func (h *ActionHandler) openNew(svc *lsp.Service, path, content string, overwrite bool, label, old string) error {
+// currentText returns the text of path: the open buffer (with its version)
+// if there is one, else the file on disk (ok reports whether it exists).
+func currentText(svc *lsp.Service, path string) (text string, version *int, ok bool) {
+	if b, found := svc.Buffers.Get(pathURI(path)); found {
+		v := b.Version
+		return b.Text, &v, true
+	}
+	data, err := os.ReadFile(path)
+	return string(data), nil, err == nil
+}
+
+// openNew writes content to path through workspace/applyEdit and shows it in
+// a split. overwrite replaces the whole current document, otherwise content is
+// appended. Edits are positioned against the document's current text and
+// carry the open buffer's version so Helix rejects them if it moved on.
+func (h *ActionHandler) openNew(svc *lsp.Service, path, content string, overwrite bool, label string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	uri := pathURI(path)
-	rng := lsp.Range{Start: endOf(old), End: endOf(old)}
+	cur, ver, exists := currentText(svc, path)
+	rng := lsp.Range{Start: endOf(cur), End: endOf(cur)}
 	if overwrite {
 		rng.Start = lsp.Position{}
 	}
-	svc.SendRequest(lsp.EventApplyEdit, lsp.ApplyWorkspaceEditParams{
-		Label: label,
-		Edit: lsp.WorkspaceEdit{DocumentChanges: []any{
-			lsp.CreateFile{Kind: "create", URI: uri, Options: &lsp.CreateFileOptions{Overwrite: overwrite, IgnoreIfExists: !overwrite}},
-			lsp.TextDocumentEdit{TextDocument: lsp.OptionalVersionedTextDocumentIdentifier{URI: uri}, Edits: []lsp.TextEdit{{Range: rng, NewText: content}}},
-		}},
-	})
+	changes := []any{}
+	if !exists {
+		changes = append(changes, lsp.CreateFile{Kind: "create", URI: uri, Options: &lsp.CreateFileOptions{IgnoreIfExists: true}})
+	}
+	changes = append(changes, lsp.TextDocumentEdit{TextDocument: lsp.OptionalVersionedTextDocumentIdentifier{URI: uri, Version: ver}, Edits: []lsp.TextEdit{{Range: rng, NewText: content}}})
+	svc.SendRequest(lsp.EventApplyEdit, lsp.ApplyWorkspaceEditParams{Label: label, Edit: lsp.WorkspaceEdit{DocumentChanges: changes}})
 	svc.SendRequest(lsp.EventShowDocument, lsp.ShowDocumentParams{URI: uri})
 	return nil
 }

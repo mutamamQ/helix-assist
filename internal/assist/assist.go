@@ -141,10 +141,6 @@ func EnclosingBlock(lines []string, line int) (int, int) {
 		}
 		break
 	}
-	// brace languages with the header's opening line holding the body on one line
-	if end-start > 400 {
-		end = start + 400
-	}
 	return start, end
 }
 
@@ -155,6 +151,18 @@ type CommentInstruction struct {
 }
 
 var aiCommentRe = regexp.MustCompile(`^\s*(?:#+|//+|--+|;+|/\*+|\*+|<!--|%+)\s*(?i:ai)\s*[:>]\s*(.+?)\s*(?:\*/|-->)?\s*$`)
+
+var commentLineRe = regexp.MustCompile(`^\s*(?:#|//|--|;|/\*|\*|<!--|%)`)
+
+// LeadingInstructions returns "ai:" comments in the contiguous comment lines
+// directly above line start (stopping at the first non-comment line).
+func LeadingInstructions(lines []string, start int) []CommentInstruction {
+	var out []CommentInstruction
+	for i := min(start, len(lines)) - 1; i >= 0 && commentLineRe.MatchString(lines[i]); i-- {
+		out = append(FindInstructions(lines, i, i), out...)
+	}
+	return out
+}
 
 // FindInstructions returns "ai:" comments within [start,end].
 func FindInstructions(lines []string, start, end int) []CommentInstruction {
@@ -290,16 +298,32 @@ var proseRe = regexp.MustCompile(`^\s*(?i:sorry\b|i can(?:no|')?t\b|i'm (?:sorry
 
 var testNameRe = regexp.MustCompile(`(?m)^\s*(?:async\s+)?(?:def|func|fn|function|it|test)\s*\(?\s*['"]?(Test\w*|test\w*)`)
 
-// DuplicateTests returns the first test name in code that already exists in
-// existing (so appending would duplicate it), or "".
+// testDescRe matches JS/TS it/test/describe calls with a quoted description.
+var testDescRe = regexp.MustCompile("(?m)^\\s*(?:it|test|describe)(?:\\.\\w+)?\\s*\\(\\s*(?:'([^']+)'|\"([^\"]+)\"|`([^`]+)`)")
+
+// DuplicateTests returns the first test name or description in code that
+// already exists in existing (so appending would duplicate it), or "".
 func DuplicateTests(code, existing string) string {
 	have := map[string]bool{}
-	for _, m := range testNameRe.FindAllStringSubmatch(existing, -1) {
-		have[m[1]] = true
+	for _, re := range []*regexp.Regexp{testNameRe, testDescRe} {
+		for _, m := range re.FindAllStringSubmatch(existing, -1) {
+			have[firstNonEmpty(m[1:])] = true
+		}
 	}
-	for _, m := range testNameRe.FindAllStringSubmatch(code, -1) {
-		if have[m[1]] {
-			return m[1]
+	for _, re := range []*regexp.Regexp{testNameRe, testDescRe} {
+		for _, m := range re.FindAllStringSubmatch(code, -1) {
+			if n := firstNonEmpty(m[1:]); have[n] {
+				return n
+			}
+		}
+	}
+	return ""
+}
+
+func firstNonEmpty(ss []string) string {
+	for _, s := range ss {
+		if s != "" {
+			return s
 		}
 	}
 	return ""
