@@ -61,6 +61,7 @@ type chatResponse struct {
 		Message struct {
 			Content string `json:"content"`
 		} `json:"message"`
+		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 }
 
@@ -127,6 +128,11 @@ func (p *BryantProvider) Chat(ctx context.Context, query, content, filepath, lan
 }
 
 func (p *BryantProvider) chat(ctx context.Context, model, system, user string, maxTokens int, temp *float64) (string, error) {
+	text, _, err := p.chatFR(ctx, model, system, user, maxTokens, temp)
+	return text, err
+}
+
+func (p *BryantProvider) chatFR(ctx context.Context, model, system, user string, maxTokens int, temp *float64) (string, string, error) {
 	body := chatRequest{
 		Model: model,
 		Messages: []chatMessage{
@@ -139,7 +145,7 @@ func (p *BryantProvider) chat(ctx context.Context, model, system, user string, m
 	}
 	jsonBody, err := json.Marshal(body)
 	if err != nil {
-		return "", fmt.Errorf("marshal request: %w", err)
+		return "", "", fmt.Errorf("marshal request: %w", err)
 	}
 
 	// Only impose the provider timeout when the caller didn't set a deadline,
@@ -152,7 +158,7 @@ func (p *BryantProvider) chat(ctx context.Context, model, system, user string, m
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint+"/chat/completions", bytes.NewReader(jsonBody))
 	if err != nil {
-		return "", fmt.Errorf("create request: %w", err)
+		return "", "", fmt.Errorf("create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
@@ -160,28 +166,39 @@ func (p *BryantProvider) chat(ctx context.Context, model, system, user string, m
 	start := time.Now()
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
-		return "", fmt.Errorf("request failed: %w", err)
+		return "", "", fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("read response: %w", err)
+		return "", "", fmt.Errorf("read response: %w", err)
 	}
 	p.logger.Log("DEBUG [Bryant]:", model, "status", resp.StatusCode, "in", time.Since(start).String())
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(respBody))
+		return "", "", statusError(resp.StatusCode, respBody)
 	}
 
 	var parsed chatResponse
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		return "", fmt.Errorf("parse response: %w", err)
+		return "", "", fmt.Errorf("parse response: %w", err)
 	}
 	if len(parsed.Choices) == 0 {
-		return "", fmt.Errorf("no choices in response")
+		return "", "", fmt.Errorf("no choices in response")
 	}
-	return parsed.Choices[0].Message.Content, nil
+	return parsed.Choices[0].Message.Content, parsed.Choices[0].FinishReason, nil
+}
+
+func statusError(status int, body []byte) error {
+	if status == http.StatusUnauthorized {
+		return fmt.Errorf("bridge auth failed (401): run bryant-provider refresh")
+	}
+	msg := strings.TrimSpace(string(body))
+	if len(msg) > 200 {
+		msg = msg[:200] + "..."
+	}
+	return fmt.Errorf("API error (status %d): %s", status, msg)
 }
 
 // Raw sends an arbitrary system/user prompt to a specific model ("" = chat model).
@@ -192,8 +209,17 @@ func (p *BryantProvider) Raw(ctx context.Context, model, system, user string, ma
 	temp := 0.2
 	// The bridge trims leading whitespace off replies, which destroys the first
 	// line's indentation. A sentinel first line keeps it intact.
-	out, err := p.chat(ctx, model, system+"\n\nStart your reply with a line containing only "+sentinel+" and then the answer.", user, maxTokens, &temp)
-	return stripSentinel(out), err
+	out, fr, err := p.chatFR(ctx, model, system+"\n\nStart your reply with a line containing only "+sentinel+" and then the answer.", user, maxTokens, &temp)
+	if err != nil {
+		return "", err
+	}
+	if fr == "length" || fr == "content_filter" {
+		if fr == "length" {
+			return "", fmt.Errorf("model output was truncated (finish_reason=length)")
+		}
+		return "", fmt.Errorf("model output was blocked (finish_reason=content_filter)")
+	}
+	return stripSentinel(out), nil
 }
 
 const sentinel = "@@@"
