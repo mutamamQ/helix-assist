@@ -13,6 +13,8 @@ TEST_PACKAGE=./cmd/helix-assist-test
 
 BUILD_DIR=build
 
+HXAI_PACKAGE=./cmd/hxai
+
 PROVIDER?=openai
 
 VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -24,7 +26,7 @@ LDFLAGS=-ldflags "-X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME) -X 
 .PHONY: all build clean test deps help
 .PHONY: linux-amd64 linux-arm64 linux-arm darwin-amd64 darwin-arm64 windows-amd64
 .PHONY: nixos-amd64 freebsd-amd64 build-all install
-.PHONY: build-test install-test run-tests
+.PHONY: build-test install-test run-tests build-hxai install-hxai
 
 all: build
 
@@ -39,6 +41,17 @@ build:
 install:
 	@echo "Installing $(BINARY_NAME)..."
 	$(GOCMD) install $(LDFLAGS) $(MAIN_PACKAGE)
+	@echo "Install complete"
+
+# Build hxai (Helix shell-command AI CLI)
+build-hxai:
+	@mkdir -p $(BUILD_DIR)
+	CGO_ENABLED=0 $(GOBUILD) -o $(BUILD_DIR)/hxai $(HXAI_PACKAGE)
+	@echo "Build complete: $(BUILD_DIR)/hxai"
+
+# Install hxai to $GOPATH/bin
+install-hxai:
+	CGO_ENABLED=0 $(GOCMD) install $(HXAI_PACKAGE)
 	@echo "Install complete"
 
 # Build test tool for current platform
@@ -133,6 +146,8 @@ help:
 	@echo "Available targets:"
 	@echo "  make build          - Build for current platform (default)"
 	@echo "  make install        - Install to \$$GOPATH/bin"
+	@echo "  make build-hxai     - Build hxai CLI"
+	@echo "  make install-hxai   - Install hxai CLI"
 	@echo "  make build-test     - Build test tool for current platform"
 	@echo "  make install-test   - Install test tool to \$$GOPATH/bin"
 	@echo "  make run-tests      - Run completion tests (PROVIDER=openai|anthropic)"
