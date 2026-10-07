@@ -203,8 +203,11 @@ func (p *OpenAIProvider) doRequest(ctx context.Context, endpoint string, body an
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, p.timeout)
-	defer cancel()
+	if _, ok := ctx.Deadline(); !ok { // actions bring their own (longer) deadline
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, p.timeout)
+		defer cancel()
+	}
 
 	url := p.endpoint + endpoint
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))

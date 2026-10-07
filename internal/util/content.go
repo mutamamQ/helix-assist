@@ -2,6 +2,7 @@ package util
 
 import (
 	"strings"
+	"unicode/utf16"
 )
 
 type ContentParts struct {
@@ -10,6 +11,18 @@ type ContentParts struct {
 	LastCharacter           string
 	LastLine                string
 	ContentImmediatelyAfter string
+}
+
+// byteCol converts an LSP UTF-16 column to a byte offset in s.
+func byteCol(s string, col int) int {
+	units := 0
+	for i, r := range s {
+		if units >= col {
+			return i
+		}
+		units += utf16.RuneLen(r)
+	}
+	return len(s)
 }
 
 func GetContent(contents string, line, column int) ContentParts {
@@ -21,6 +34,10 @@ func GetContent(contents string, line, column int) ContentParts {
 
 	if line >= len(lines) {
 		line = len(lines) - 1
+	}
+
+	if column >= 0 {
+		column = byteCol(lines[line], column)
 	}
 
 	beforeLines := make([]string, line+1)

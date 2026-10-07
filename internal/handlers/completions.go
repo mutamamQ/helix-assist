@@ -115,16 +115,8 @@ func (h *CompletionHandler) doCompletion(svc *lsp.Service, msg *lsp.JSONRPCMessa
 
 	if err != nil {
 		svc.Logger.Log("completion error:", err.Error())
-		svc.SendDiagnostics([]lsp.Diagnostic{
-			{
-				Message:  err.Error(),
-				Severity: lsp.SeverityError,
-				Range: lsp.Range{
-					Start: lsp.Position{Line: params.Position.Line, Character: 0},
-					End:   lsp.Position{Line: params.Position.Line + 1, Character: 0},
-				},
-			},
-		}, 0)
+		// statusline, not a diagnostic: diagnostics stick and would show up as "AI fix:" entries
+		svc.SendShowMessage(lsp.MessageTypeError, "helix-assist: "+err.Error())
 		return
 	}
 
@@ -180,7 +172,7 @@ func (h *CompletionHandler) buildCompletionItem(hint string, content util.Conten
 
 	lines := strings.Split(hint, "\n")
 	cleanLine := position.Line + len(lines) - 1
-	cleanCharacter := len(lines[len(lines)-1])
+	cleanCharacter := assist.UTF16Len(lines[len(lines)-1]) // LSP columns are UTF-16
 
 	if cleanLine == position.Line {
 		cleanCharacter += position.Character
@@ -201,7 +193,7 @@ func (h *CompletionHandler) buildCompletionItem(hint string, content util.Conten
 		additionalEdits = append(additionalEdits, lsp.TextEdit{
 			Range: lsp.Range{
 				Start: lsp.Position{Line: cleanLine, Character: cleanCharacter},
-				End:   lsp.Position{Line: cleanLine, Character: cleanCharacter + overlapLen},
+				End:   lsp.Position{Line: cleanLine, Character: cleanCharacter + assist.UTF16Len(content.ContentImmediatelyAfter[:overlapLen])},
 			},
 			NewText: "",
 		})

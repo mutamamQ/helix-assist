@@ -124,6 +124,8 @@ target is the enclosing function/class; otherwise the selected lines.
   optimize, simplify, explain (opens a markdown split), write tests (creates/appends `test_<file>`).
 - Safety: prose/empty replies are rejected, CRLF preserved, stale edits re-located or discarded,
   edits are versioned, the same action can't run twice at once. Undo with `u`.
+- The AI actions are built for the `bryant` handler; with `openai`/`anthropic` they fall back to the plain chat prompt (lower quality, no deep model).
+- If helix-assist can't start (e.g. missing key) Helix shows the reason in the statusline; details via `:log-open`.
 - Optional project notes: put `.helix-assist.md` in the repo (conventions, libraries); it's sent with every action.
 
 ### Autocomplete project context (opt-in)

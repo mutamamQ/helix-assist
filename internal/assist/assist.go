@@ -67,7 +67,7 @@ func indentOf(s string) int {
 
 func isBlank(s string) bool { return strings.TrimSpace(s) == "" }
 
-var headerRe = regexp.MustCompile(`^\s*(export\s+)?(pub(\([^)]*\))?\s+)?(async\s+)?(def|class|func|function|fn|impl|struct|enum|interface|trait|type|module|object|const\s+\w+\s*=\s*(async\s*)?\(|let\s+\w+\s*=\s*(async\s*)?\(|(public|private|protected|static)\b)`)
+var headerRe = regexp.MustCompile(`^\s*(export\s+)?(pub(\([^)]*\))?\s+)?(async\s+)?((def|class|func|function|fn|impl|struct|enum|interface|trait|type|module|object)\b|const\s+\w+\s*=\s*(async\s*)?\(|let\s+\w+\s*=\s*(async\s*)?\(|(public|private|protected|static)\b)`)
 
 // IsHeader reports whether a line looks like the start of a definition.
 func IsHeader(s string) bool { return headerRe.MatchString(s) }
@@ -210,18 +210,64 @@ func InstructionTarget(lines []string, commentLine int) (int, int) {
 // base indentation, and normalises the trailing newline.
 func FixIndent(out, original string) string {
 	out = strings.TrimRight(out, " \t\n")
-	origMin := minIndent(original)
-	outMin := minIndent(out)
-	if origMin != "" && outMin == "" {
+	if d := lostMargin(out, original); d != "" {
 		ls := strings.Split(out, "\n")
 		for i, l := range ls {
 			if !isBlank(l) {
-				ls[i] = origMin + l
+				ls[i] = d + l
 			}
 		}
 		out = strings.Join(ls, "\n")
 	}
 	return out + "\n"
+}
+
+// lostMargin returns the indentation the reply dropped, judged by lines that
+// appear in both texts: if they are consistently shallower by the same prefix
+// the reply lost the target's margin. Without shared lines, fall back to
+// "every reply line at column 0 while the original was indented".
+func lostMargin(out, original string) string {
+	orig := map[string]string{}
+	for _, l := range strings.Split(original, "\n") {
+		if t := strings.TrimSpace(l); t != "" {
+			if _, dup := orig[t]; !dup {
+				orig[t] = l[:indentOf(l)]
+			}
+		}
+	}
+	margin, seen := "", false
+	for _, l := range strings.Split(out, "\n") {
+		t := strings.TrimSpace(l)
+		oi, ok := orig[t]
+		if t == "" || !ok {
+			continue
+		}
+		ri := l[:indentOf(l)]
+		if !strings.HasSuffix(oi, ri) {
+			return "" // deeper than the original: don't touch
+		}
+		d := oi[:len(oi)-len(ri)]
+		if seen && d != margin {
+			return "" // inconsistent: leave as is
+		}
+		margin, seen = d, true
+	}
+	if seen {
+		return margin
+	}
+	if m := minIndent(original); m != "" && !anyIndented(out) {
+		return m
+	}
+	return ""
+}
+
+func anyIndented(text string) bool {
+	for _, l := range strings.Split(text, "\n") {
+		if !isBlank(l) && indentOf(l) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func minIndent(text string) string {
@@ -294,9 +340,11 @@ func CleanReply(reply, original string) (string, error) {
 	return t, nil
 }
 
-var proseRe = regexp.MustCompile(`^\s*(?i:sorry\b|i can(?:no|')?t\b|i'm (?:sorry|unable)\b|i am (?:sorry|unable)\b|as an ai\b|unfortunately\b|here(?: is|'s| you go| are)\b|sure[,!.]|certainly[,!.]|of course[,!.])`)
+// Openers only count as prose when followed by prose-ish text, so code like
+// sure.expect(x), sorry(user) or "sure, rest = split(x)" is not rejected.
+var proseRe = regexp.MustCompile(`^\s*(?i:sorry(?:[,.!]|\s+(?:i|but|for|about|that|,))|i can(?:no|')?t\s|i'm (?:sorry|unable)\b|i am (?:sorry|unable)\b|as an ai\b|unfortunately[,\s]|here(?: is|'s| you go| are)[\s:,!.]|(?:sure|certainly|of course)(?:[!.](?:\s|$)|,\s+(?:here|i|this|that|the|let)\b))`)
 
-var testNameRe = regexp.MustCompile(`(?m)^\s*(?:async\s+)?(?:def|func|fn|function|it|test)\s*\(?\s*['"]?(Test\w*|test\w*)`)
+var testNameRe = regexp.MustCompile(`(?m)^\s*(?:async\s+)?(?:def|func|fn|function)\s+(Test\w*|test\w*)`)
 
 // testDescRe matches JS/TS it/test/describe calls with a quoted description.
 var testDescRe = regexp.MustCompile("(?m)^\\s*(?:it|test|describe)(?:\\.\\w+)?\\s*\\(\\s*(?:'([^']+)'|\"([^\"]+)\"|`([^`]+)`)")

@@ -74,6 +74,30 @@ func TestFixIndent(t *testing.T) {
 	}
 }
 
+func TestFixIndentMixedReply(t *testing.T) {
+	// mid-block window: reply has one comment at col 0, rest correctly indented
+	got := FixIndent("# note\n    a = 1\n    b = 2", "    a = 1\n    b = 2")
+	if got != "# note\n    a = 1\n    b = 2\n" {
+		t.Fatalf("got %q", got)
+	}
+	// nested code that lost only the outer margin (all lines >= 0, some at 0) still gets it back
+	if got := FixIndent("if x:\n    y()", "    if x:\n        y()"); got != "    if x:\n        y()\n" {
+		t.Fatalf("nested: %q", got)
+	}
+}
+
+func TestFixIndentWindowEcho(t *testing.T) {
+	orig := "    value_1401 = 1401\n    value_1402 = 1402"
+	got := FixIndent("# R2 applied\n    value_1401 = 1401\n    value_1402 = 1402", orig)
+	if strings.Contains(got, "        value") {
+		t.Fatalf("re-indented a correct reply: %q", got)
+	}
+	// new code with no shared lines, all at col 0 -> gets the margin
+	if got := FixIndent("x = 1\ny = 2", "    a = 1"); got != "    x = 1\n    y = 2\n" {
+		t.Fatalf("got %q", got)
+	}
+}
+
 func TestFileWithMarkersWindow(t *testing.T) {
 	src := make([]string, 5000)
 	for i := range src {

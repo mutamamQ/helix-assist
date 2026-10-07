@@ -73,6 +73,9 @@ func (s *BufferStore) UpdateText(uri string, version int, text string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if buf, ok := s.buffers[uri]; ok {
+		if version < buf.Version {
+			return // stale notification
+		}
 		nb := *buf
 		nb.Text = text
 		nb.Version = version
