@@ -29,6 +29,17 @@ func TestParseArgs(t *testing.T) {
 	if err != nil || o.file != spaced || o.text != "add types" {
 		t.Fatalf("spaced path: %+v %v", o, err)
 	}
+	sp := dir + "/my dir"
+	if err := os.Mkdir(sp, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sp+"/my file.txt", nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	o, err = parseArgs([]string{"--file", dir + "/my", "dir/my", "file.txt", "fix", "it"})
+	if err != nil || o.file != sp+"/my file.txt" || o.text != "fix it" {
+		t.Fatalf("spaced dir: %+v %v", o, err)
+	}
 	if _, err := finish(" \n", "x\n"); err == nil {
 		t.Fatal("blank reply accepted")
 	}
@@ -38,6 +49,8 @@ func TestFinishNewline(t *testing.T) {
 	for _, c := range []struct{ out, in, want string }{
 		{"```py\nx = 1\n```", "y = 2", "x = 1"},
 		{"x = 1\n", "y = 2\n", "x = 1\n"},
+		{"x\ny\n", "a\r\nb\r\n", "x\r\ny\r\n"},
+		{"x\r\ny", "a\r\nb", "x\r\ny"},
 		{"a\nb", "    a\n    b", "    a\n    b"},
 	} {
 		if got, _ := finish(c.out, c.in); got != c.want {
