@@ -119,7 +119,7 @@ func EnclosingBlock(lines []string, line int) (int, int) {
 	start := header
 	for start > 0 {
 		p := strings.TrimSpace(lines[start-1])
-		if strings.HasPrefix(p, "@") || strings.HasPrefix(p, "#[") {
+		if strings.HasPrefix(p, "@") || strings.HasPrefix(p, "#[") || strings.HasPrefix(p, "///") || strings.HasPrefix(p, "//!") {
 			start--
 			continue
 		}

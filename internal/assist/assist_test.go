@@ -23,6 +23,13 @@ func TestEnclosingBlockBraces(t *testing.T) {
 	}
 }
 
+func TestEnclosingBlockRustDocs(t *testing.T) {
+	src := lines("/// Adds.\n/// ```\n/// x\n/// ```\nfn add() -> i32 {\n    1\n}")
+	if s, e := EnclosingBlock(src, 5); s != 0 || e != 6 {
+		t.Fatalf("got %d-%d want 0-6", s, e)
+	}
+}
+
 func TestEnclosingBlockTopLevelParagraph(t *testing.T) {
 	src := lines("a = 1\nb = 2\n\nc = 3")
 	s, e := EnclosingBlock(src, 1)
