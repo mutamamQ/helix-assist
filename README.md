@@ -112,6 +112,26 @@ command = "helix-assist"
 args = ["--handler", "bryant", "--num-suggestions", "2"]
 ```
 
+## AI features (fork additions)
+
+### space-a code actions (context-aware)
+The model always sees the whole file with the target marked. With nothing selected the
+target is the enclosing function/class; otherwise the selected lines.
+- `AI fix: <diagnostic>` entries for diagnostics under the cursor (top of the menu), plus `AI: fix all diagnostics`.
+- `# ai: <instruction>` (any comment syntax) above or inside code: space-a offers `AI: <instruction>`,
+  applies it and deletes the comment. A lone comment generates code in its place.
+- improve, refactor, refactor (deep = Opus 5.5), add docs, add type hints, add error handling,
+  optimize, simplify, explain (opens a markdown split), write tests (creates/appends `test_<file>`).
+- Safety: prose/empty replies are rejected, CRLF preserved, stale edits re-located or discarded,
+  edits are versioned, the same action can't run twice at once. Undo with `u`.
+- Optional project notes: put `.helix-assist.md` in the repo (conventions, libraries); it's sent with every action.
+
+### hxai CLI (space-i keybinds)
+`hxai doc` prints keybinds for `~/.config/helix/config.toml`; type the instruction inside the
+prefilled quotes. `hxai keys` answers Helix keybinding questions from the embedded 25.07.1 docs.
+Errors abort the edit (Helix shows "Shell command failed"); details in `~/.cache/hxai.log`.
+`make install-hxai` installs it.
+
 ## Usage
 
 1. Start Helix and open a file
