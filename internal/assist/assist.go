@@ -154,7 +154,7 @@ type CommentInstruction struct {
 	Instruction string // text after "ai:"
 }
 
-var aiCommentRe = regexp.MustCompile(`^\s*(?:#+|//+|--+|;+|/\*+|\*+|<!--|%+|"|')\s*(?i:ai)\s*[:>]\s*(.+?)\s*(?:\*/|-->)?\s*$`)
+var aiCommentRe = regexp.MustCompile(`^\s*(?:#+|//+|--+|;+|/\*+|\*+|<!--|%+)\s*(?i:ai)\s*[:>]\s*(.+?)\s*(?:\*/|-->)?\s*$`)
 
 // FindInstructions returns "ai:" comments within [start,end].
 func FindInstructions(lines []string, start, end int) []CommentInstruction {
@@ -253,19 +253,54 @@ func TestPath(path, languageID string) string {
 	}
 }
 
-// StripPreamble removes chatty lines some models put before code.
-func StripPreamble(s string) string {
-	t := strings.TrimSpace(s)
-	if i := strings.Index(t, "```"); i > 0 && i < 300 {
-		// prose then a fenced block: keep the block
-		rest := t[i:]
+// CleanReply turns a model reply into replacement code for original, or
+// returns an error when the reply isn't usable (empty, prose, refusal).
+// A ``` fence is only stripped when it wraps the entire reply, so Markdown
+// and doc comments that legitimately contain fences survive.
+func CleanReply(reply, original string) (string, error) {
+	t := strings.TrimRight(strings.TrimLeft(reply, "\r\n"), " \t\r\n") // keep first-line indent
+	if strings.HasPrefix(strings.TrimSpace(t), "```") && strings.HasSuffix(t, "```") && strings.HasSuffix(t, "```") && len(t) > 6 && !strings.HasPrefix(strings.TrimSpace(original), "```") {
+		if nl := strings.Index(t, "\n"); nl != -1 && strings.HasPrefix(strings.TrimSpace(t), "```") {
+			t = strings.TrimSuffix(t[nl+1:], "```")
+		} else {
+			t = ""
+		}
+	} else if i := strings.Index(t, "\n```"); i > 0 && i < 300 && proseRe.MatchString(t) && !strings.Contains(original, "```") {
+		// "Here is the code:\n```lang\n...\n```": keep the block
+		rest := t[i+1:]
 		if nl := strings.Index(rest, "\n"); nl != -1 {
 			rest = rest[nl+1:]
 			if j := strings.LastIndex(rest, "```"); j != -1 {
 				rest = rest[:j]
 			}
-			return strings.TrimRight(rest, " \n\t")
+			t = rest
 		}
 	}
-	return s
+	t = strings.TrimRight(t, " \t\r\n")
+	if strings.TrimSpace(t) == "" {
+		return "", fmt.Errorf("model returned no code")
+	}
+	if proseRe.MatchString(t) && !proseRe.MatchString(original) {
+		return "", fmt.Errorf("model replied with prose instead of code: %.60q", t)
+	}
+	return t, nil
+}
+
+var proseRe = regexp.MustCompile(`^\s*(?i:sorry\b|i can(?:no|')?t\b|i'm (?:sorry|unable)\b|i am (?:sorry|unable)\b|as an ai\b|unfortunately\b|here(?: is|'s| you go| are)\b|sure[,!.]|certainly[,!.]|of course[,!.])`)
+
+var testNameRe = regexp.MustCompile(`(?m)^\s*(?:async\s+)?(?:def|func|fn|function|it|test)\s*\(?\s*['"]?(Test\w*|test\w*)`)
+
+// DuplicateTests returns the first test name in code that already exists in
+// existing (so appending would duplicate it), or "".
+func DuplicateTests(code, existing string) string {
+	have := map[string]bool{}
+	for _, m := range testNameRe.FindAllStringSubmatch(existing, -1) {
+		have[m[1]] = true
+	}
+	for _, m := range testNameRe.FindAllStringSubmatch(code, -1) {
+		if have[m[1]] {
+			return m[1]
+		}
+	}
+	return ""
 }

@@ -107,13 +107,17 @@ func parseArgs(args []string) (o opts, err error) {
 	return
 }
 
-// finish restores the input's trailing-newline style on model output.
-func finish(out, in string) string {
-	out = assist.FixIndent(providers.CleanCodeOutput(assist.StripPreamble(out)), in)
-	if !strings.HasSuffix(in, "\n") {
-		out = strings.TrimSuffix(out, "\n")
+// finish validates model output and restores the input's indent/newline style.
+func finish(out, in string) (string, error) {
+	code, err := assist.CleanReply(out, in)
+	if err != nil {
+		return "", err
 	}
-	return out
+	code = assist.FixIndent(code, in)
+	if !strings.HasSuffix(in, "\n") {
+		code = strings.TrimSuffix(code, "\n")
+	}
+	return code, nil
 }
 
 func readFile(path string) (string, []string) {
@@ -227,7 +231,7 @@ func run(args []string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return nonEmpty(finish(out, in))
+		return finish(out, in)
 	case "gen":
 		if o.text == "" {
 			return "", fmt.Errorf("gen needs an instruction")
@@ -242,7 +246,7 @@ func run(args []string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return nonEmpty(finish(out, base+"\n"))
+		return finish(out, base+"\n")
 	case "ask":
 		if o.text == "" {
 			return "", fmt.Errorf("ask needs a question")
@@ -296,14 +300,6 @@ func run(args []string) (string, error) {
 		return tidyAnswer(out), nil
 	}
 	return "", fmt.Errorf("unknown command %q (try --help)", cmd)
-}
-
-// nonEmpty refuses to replace the user's selection with a blank model reply.
-func nonEmpty(s string) (string, error) {
-	if strings.TrimSpace(s) == "" {
-		return "", fmt.Errorf("model returned nothing")
-	}
-	return s, nil
 }
 
 // tidyAnswer drops fence lines (the :sh popup is already a ```sh block).
