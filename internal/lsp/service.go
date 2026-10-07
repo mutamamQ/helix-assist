@@ -95,6 +95,7 @@ type Service struct {
 	mu           sync.RWMutex
 	stdin        io.Reader
 	stdout       io.Writer
+	nextID       int
 }
 
 func NewService(capabilities ServerCapabilities, logger *Logger, version string) *Service {
@@ -291,6 +292,24 @@ func (s *Service) SendProgressEnd(token string) {
 			},
 		}),
 	})
+}
+
+// SendRequest sends a server->client request (e.g. workspace/applyEdit) with its own id.
+// Responses are not awaited; Helix processes requests in order.
+func (s *Service) SendRequest(method string, params any) {
+	s.mu.Lock()
+	s.nextID++
+	id := 1_000_000 + s.nextID
+	s.mu.Unlock()
+	s.Send(&JSONRPCMessage{ID: &id, Method: method, Params: mustMarshal(params)})
+}
+
+// Reply answers a client request with a (possibly nil) result.
+func (s *Service) Reply(id *int, result any) {
+	if id == nil {
+		return
+	}
+	s.Send(&JSONRPCMessage{ID: id, Result: result})
 }
 
 func (s *Service) SendShowMessage(msgType MessageType, message string) {

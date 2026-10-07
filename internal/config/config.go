@@ -20,6 +20,7 @@ type Config struct {
 	BryantKey              string
 	BryantModel            string
 	BryantModelForChat     string
+	BryantModelDeep        string
 	BryantEndpoint         string
 	Debounce               int
 	TriggerCharacters      []string
@@ -44,12 +45,13 @@ func DefaultConfig() *Config {
 		AnthropicEndpoint:      "https://api.anthropic.com",
 		BryantModel:            "15d8cc8844/CLAUDE_V5_5_SONNET",
 		BryantModelForChat:     "15d8cc8844/CLAUDE_V5_5_SONNET",
+		BryantModelDeep:        "15d8cc8844/CLAUDE_V5_5_OPUS",
 		BryantEndpoint:         "http://127.0.0.1:8765/v1",
 		Debounce:               200,
 		TriggerCharacters:      []string{"{", "(", " "},
 		NumSuggestions:         1,
 		FetchTimeout:           15000,
-		ActionTimeout:          15000,
+		ActionTimeout:          120000,
 		CompletionTimeout:      15000,
 		EnableProgressSpinner:  true,
 		ProgressUpdateInterval: 200,
@@ -73,6 +75,7 @@ func Load() *Config {
 	bryantKey := flag.String("bryant-key", getEnvOrDefault("BRYANT_API_KEY", ""), "BryantGPT local bridge key")
 	bryantModel := flag.String("bryant-model", getEnvOrDefault("BRYANT_MODEL", cfg.BryantModel), "BryantGPT model for completions")
 	bryantModelForChat := flag.String("bryant-model-for-chat", getEnvOrDefault("BRYANT_MODEL_FOR_CHAT", cfg.BryantModelForChat), "BryantGPT model for code actions")
+	bryantModelDeep := flag.String("bryant-model-deep", getEnvOrDefault("BRYANT_MODEL_DEEP", cfg.BryantModelDeep), "BryantGPT model for (deep) code actions")
 	bryantEndpoint := flag.String("bryant-endpoint", getEnvOrDefault("BRYANT_ENDPOINT", cfg.BryantEndpoint), "BryantGPT OpenAI-compatible endpoint")
 	debounce := flag.Int("debounce", getEnvOrDefaultInt("DEBOUNCE", cfg.Debounce), "Debounce delay (ms)")
 	triggerChars := flag.String("trigger-chars", getEnvOrDefault("TRIGGER_CHARACTERS", "{||(|| "), "Completion trigger characters (separated by ||)")
@@ -100,8 +103,9 @@ func Load() *Config {
 	cfg.BryantModel = *bryantModel
 	cfg.BryantModelForChat = *bryantModelForChat
 	cfg.BryantEndpoint = *bryantEndpoint
+	cfg.BryantModelDeep = *bryantModelDeep
 	if cfg.BryantKey == "" {
-		cfg.BryantKey = readHermesEnvKey("BRYANT_API_KEY")
+		cfg.BryantKey = ReadHermesEnvKey("BRYANT_API_KEY")
 	}
 	cfg.Debounce = *debounce
 	cfg.TriggerCharacters = strings.Split(*triggerChars, "||")
@@ -170,9 +174,9 @@ func getEnvOrDefaultBool(key string, defaultValue bool) bool {
 	return defaultValue
 }
 
-// readHermesEnvKey falls back to the key stored in $HERMES_HOME/.env (default ~/.hermes/.env)
+// ReadHermesEnvKey falls back to the key stored in $HERMES_HOME/.env (default ~/.hermes/.env)
 // so Helix doesn't need the secret in languages.toml or the shell environment.
-func readHermesEnvKey(key string) string {
+func ReadHermesEnvKey(key string) string {
 	home := os.Getenv("HERMES_HOME")
 	if home == "" {
 		h, err := os.UserHomeDir()

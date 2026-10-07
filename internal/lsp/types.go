@@ -16,6 +16,7 @@ const (
 	EventPublishDiagnostics = "textDocument/publishDiagnostics"
 	EventProgress           = "$/progress"
 	EventShowMessage        = "window/showMessage"
+	EventShowDocument       = "window/showDocument"
 )
 
 type WorkDoneProgressBegin struct {
@@ -177,6 +178,7 @@ type CodeAction struct {
 	Title       string   `json:"title"`
 	Kind        string   `json:"kind,omitempty"`
 	Diagnostics []any    `json:"diagnostics,omitempty"`
+	IsPreferred bool     `json:"isPreferred,omitempty"`
 	Command     *Command `json:"command,omitempty"`
 }
 
@@ -192,7 +194,37 @@ type CommandArgument struct {
 }
 
 type WorkspaceEdit struct {
-	Changes map[string][]TextEdit `json:"changes"`
+	Changes         map[string][]TextEdit `json:"changes,omitempty"`
+	DocumentChanges []any                 `json:"documentChanges,omitempty"`
+}
+
+// OptionalVersionedTextDocumentIdentifier: Version nil means "any version".
+type OptionalVersionedTextDocumentIdentifier struct {
+	URI     string `json:"uri"`
+	Version *int   `json:"version"`
+}
+
+type TextDocumentEdit struct {
+	TextDocument OptionalVersionedTextDocumentIdentifier `json:"textDocument"`
+	Edits        []TextEdit                              `json:"edits"`
+}
+
+type CreateFileOptions struct {
+	Overwrite      bool `json:"overwrite,omitempty"`
+	IgnoreIfExists bool `json:"ignoreIfExists,omitempty"`
+}
+
+type CreateFile struct {
+	Kind    string             `json:"kind"` // always "create"
+	URI     string             `json:"uri"`
+	Options *CreateFileOptions `json:"options,omitempty"`
+}
+
+type ShowDocumentParams struct {
+	URI       string `json:"uri"`
+	External  bool   `json:"external,omitempty"`
+	TakeFocus bool   `json:"takeFocus,omitempty"`
+	Selection *Range `json:"selection,omitempty"`
 }
 
 type ApplyWorkspaceEditParams struct {

@@ -1,0 +1,271 @@
+// Package assist holds the editor-agnostic logic behind helix-assist's AI
+// code actions and the hxai CLI: building file context, finding the block
+// under the cursor, parsing "ai:" comment instructions and post-processing
+// model output.
+package assist
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"unicode/utf16"
+)
+
+// MaxContextLines caps how much of a large file is sent around the target.
+const MaxContextLines = 1200
+
+// ProjectContext returns the contents of the nearest .helix-assist.md found
+// walking up from dir (optional, used to describe project conventions).
+func ProjectContext(dir string) string {
+	for i := 0; i < 12 && dir != "" && dir != "/"; i++ {
+		data, err := os.ReadFile(filepath.Join(dir, ".helix-assist.md"))
+		if err == nil {
+			return strings.TrimSpace(string(data))
+		}
+		dir = filepath.Dir(dir)
+	}
+	return ""
+}
+
+// FileWithMarkers returns the file text with the target lines (0-based,
+// inclusive) wrapped in markers. Large files are windowed around the target.
+func FileWithMarkers(lines []string, start, end int) string {
+	from, to := 0, len(lines)
+	if len(lines) > MaxContextLines {
+		half := (MaxContextLines - (end - start)) / 2
+		if half < 100 {
+			half = 100
+		}
+		from = max(0, start-half)
+		to = min(len(lines), end+1+half)
+	}
+	var b strings.Builder
+	if from > 0 {
+		fmt.Fprintf(&b, "... (%d lines above omitted)\n", from)
+	}
+	for i := from; i < to; i++ {
+		if i == start {
+			b.WriteString("<<<<<<< TARGET START\n")
+		}
+		b.WriteString(lines[i])
+		b.WriteString("\n")
+		if i == end {
+			b.WriteString(">>>>>>> TARGET END\n")
+		}
+	}
+	if to < len(lines) {
+		fmt.Fprintf(&b, "... (%d lines below omitted)\n", len(lines)-to)
+	}
+	return b.String()
+}
+
+func indentOf(s string) int {
+	return len(s) - len(strings.TrimLeft(s, " \t"))
+}
+
+func isBlank(s string) bool { return strings.TrimSpace(s) == "" }
+
+var headerRe = regexp.MustCompile(`^\s*(export\s+)?(pub(\([^)]*\))?\s+)?(async\s+)?(def|class|func|function|fn|impl|struct|enum|interface|trait|type|module|object|const\s+\w+\s*=\s*(async\s*)?\(|let\s+\w+\s*=\s*(async\s*)?\(|(public|private|protected|static)\b)`)
+
+// IsHeader reports whether a line looks like the start of a definition.
+func IsHeader(s string) bool { return headerRe.MatchString(s) }
+
+// EnclosingBlock finds the function/class-like block containing line (0-based)
+// using indentation. Returns the line itself if nothing better is found.
+func EnclosingBlock(lines []string, line int) (int, int) {
+	if len(lines) == 0 {
+		return 0, 0
+	}
+	line = min(max(line, 0), len(lines)-1)
+	cur := line
+	for cur < len(lines)-1 && isBlank(lines[cur]) {
+		cur++
+	}
+	header := -1
+	if IsHeader(lines[cur]) {
+		header = cur
+	} else {
+		ind := indentOf(lines[cur])
+		for i := cur - 1; i >= 0; i-- {
+			if isBlank(lines[i]) {
+				continue
+			}
+			if indentOf(lines[i]) < ind {
+				if IsHeader(lines[i]) {
+					header = i
+					break
+				}
+				ind = indentOf(lines[i])
+				if ind == 0 {
+					break
+				}
+			}
+		}
+	}
+	if header == -1 {
+		// top-level statement: use the surrounding paragraph
+		s, e := cur, cur
+		for s > 0 && !isBlank(lines[s-1]) {
+			s--
+		}
+		for e < len(lines)-1 && !isBlank(lines[e+1]) {
+			e++
+		}
+		return s, e
+	}
+	// include decorators / doc comments directly above the header
+	start := header
+	for start > 0 {
+		p := strings.TrimSpace(lines[start-1])
+		if strings.HasPrefix(p, "@") || strings.HasPrefix(p, "#[") {
+			start--
+			continue
+		}
+		break
+	}
+	hind := indentOf(lines[header])
+	end := header
+	for i := header + 1; i < len(lines); i++ {
+		if isBlank(lines[i]) {
+			continue
+		}
+		if indentOf(lines[i]) > hind {
+			end = i
+			continue
+		}
+		t := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(t, "}") || strings.HasPrefix(t, ")") || t == "end" || strings.HasPrefix(t, "]") {
+			end = i
+		}
+		break
+	}
+	// brace languages with the header's opening line holding the body on one line
+	if end-start > 400 {
+		end = start + 400
+	}
+	return start, end
+}
+
+// CommentInstruction is an "ai: ..." instruction written in a code comment.
+type CommentInstruction struct {
+	Line        int    // 0-based line of the comment
+	Instruction string // text after "ai:"
+}
+
+var aiCommentRe = regexp.MustCompile(`^\s*(?:#+|//+|--+|;+|/\*+|\*+|<!--|%+|"|')\s*(?i:ai)\s*[:>]\s*(.+?)\s*(?:\*/|-->)?\s*$`)
+
+// FindInstructions returns "ai:" comments within [start,end].
+func FindInstructions(lines []string, start, end int) []CommentInstruction {
+	var out []CommentInstruction
+	for i := max(0, start); i <= end && i < len(lines); i++ {
+		if m := aiCommentRe.FindStringSubmatch(lines[i]); m != nil {
+			out = append(out, CommentInstruction{Line: i, Instruction: m[1]})
+		}
+	}
+	return out
+}
+
+// InstructionTarget returns the lines an "ai:" comment applies to: the comment
+// plus the following block (up to the next blank line that is followed by
+// code at the comment's indentation or less). A comment followed by nothing
+// targets just itself (code is generated in its place).
+func InstructionTarget(lines []string, commentLine int) (int, int) {
+	ind := indentOf(lines[commentLine])
+	end := commentLine
+	if commentLine+1 < len(lines) && !isBlank(lines[commentLine+1]) && IsHeader(lines[commentLine+1]) {
+		_, e := EnclosingBlock(lines, commentLine+1)
+		return commentLine, e
+	}
+	for i := commentLine + 1; i < len(lines); i++ {
+		if isBlank(lines[i]) {
+			// stop at a blank line unless the code continues more indented
+			j := i + 1
+			for j < len(lines) && isBlank(lines[j]) {
+				j++
+			}
+			if j < len(lines) && indentOf(lines[j]) > ind {
+				continue
+			}
+			break
+		}
+		if indentOf(lines[i]) < ind {
+			break
+		}
+		end = i
+	}
+	return commentLine, end
+}
+
+// FixIndent re-indents model output when the model dropped the target's
+// base indentation, and normalises the trailing newline.
+func FixIndent(out, original string) string {
+	out = strings.TrimRight(out, " \t\n")
+	origMin := minIndent(original)
+	outMin := minIndent(out)
+	if origMin != "" && outMin == "" {
+		ls := strings.Split(out, "\n")
+		for i, l := range ls {
+			if !isBlank(l) {
+				ls[i] = origMin + l
+			}
+		}
+		out = strings.Join(ls, "\n")
+	}
+	return out + "\n"
+}
+
+func minIndent(text string) string {
+	best := ""
+	first := true
+	for _, l := range strings.Split(text, "\n") {
+		if isBlank(l) {
+			continue
+		}
+		ind := l[:indentOf(l)]
+		if first || len(ind) < len(best) {
+			best, first = ind, false
+		}
+	}
+	return best
+}
+
+// UTF16Len is the LSP default (UTF-16) length of s.
+func UTF16Len(s string) int { return len(utf16.Encode([]rune(s))) }
+
+// TestPath picks where tests for a source file should live.
+func TestPath(path, languageID string) string {
+	dir, base := filepath.Split(path)
+	ext := filepath.Ext(base)
+	name := strings.TrimSuffix(base, ext)
+	switch languageID {
+	case "python":
+		return filepath.Join(dir, "test_"+name+ext)
+	case "go":
+		return filepath.Join(dir, name+"_test.go")
+	case "javascript", "typescript", "javascriptreact", "typescriptreact", "tsx", "jsx":
+		return filepath.Join(dir, name+".test"+ext)
+	case "rust":
+		return filepath.Join(dir, "tests_"+name+ext)
+	default:
+		return filepath.Join(dir, name+"_test"+ext)
+	}
+}
+
+// StripPreamble removes chatty lines some models put before code.
+func StripPreamble(s string) string {
+	t := strings.TrimSpace(s)
+	if i := strings.Index(t, "```"); i > 0 && i < 300 {
+		// prose then a fenced block: keep the block
+		rest := t[i:]
+		if nl := strings.Index(rest, "\n"); nl != -1 {
+			rest = rest[nl+1:]
+			if j := strings.LastIndex(rest, "```"); j != -1 {
+				rest = rest[:j]
+			}
+			return strings.TrimRight(rest, " \n\t")
+		}
+	}
+	return s
+}

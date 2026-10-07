@@ -142,8 +142,13 @@ func (p *BryantProvider) chat(ctx context.Context, model, system, user string, m
 		return "", fmt.Errorf("marshal request: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, p.timeout)
-	defer cancel()
+	// Only impose the provider timeout when the caller didn't set a deadline,
+	// so long-running code actions can use their own (longer) budget.
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, p.timeout)
+		defer cancel()
+	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.endpoint+"/chat/completions", bytes.NewReader(jsonBody))
 	if err != nil {
@@ -178,6 +183,18 @@ func (p *BryantProvider) chat(ctx context.Context, model, system, user string, m
 	}
 	return parsed.Choices[0].Message.Content, nil
 }
+
+// Raw sends an arbitrary system/user prompt to a specific model ("" = chat model).
+func (p *BryantProvider) Raw(ctx context.Context, model, system, user string, maxTokens int) (string, error) {
+	if model == "" {
+		model = p.chatModel
+	}
+	temp := 0.2
+	return p.chat(ctx, model, system, user, maxTokens, &temp)
+}
+
+// CleanCodeOutput is the exported fence stripper used by handlers and hxai.
+func CleanCodeOutput(s string) string { return cleanCodeOutput(s) }
 
 // cleanCodeOutput strips a surrounding ``` fence if the model added one anyway.
 func cleanCodeOutput(s string) string {
