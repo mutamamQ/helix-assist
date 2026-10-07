@@ -80,7 +80,7 @@ type responsesResponse struct {
 
 func (p *OpenAIProvider) Completion(ctx context.Context, req CompletionRequest, filepath, languageID string, numSuggestions int) ([]string, error) {
 	instructions := BuildCompletionSystemPrompt(languageID)
-	userPrompt := BuildCompletionUserPrompt(filepath, req.ContentBefore, req.ContentAfter)
+	userPrompt := BuildCompletionPrompt(filepath, req)
 
 	results := make([]string, 0, numSuggestions)
 

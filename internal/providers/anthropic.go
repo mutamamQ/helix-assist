@@ -70,7 +70,7 @@ type anthropicResponse struct {
 
 func (p *AnthropicProvider) Completion(ctx context.Context, req CompletionRequest, filepath, languageID string, numSuggestions int) ([]string, error) {
 	systemPrompt := BuildCompletionSystemPrompt(languageID)
-	userPrompt := BuildCompletionUserPrompt(filepath, req.ContentBefore, req.ContentAfter)
+	userPrompt := BuildCompletionPrompt(filepath, req)
 
 	temperature := 0.0
 

@@ -25,6 +25,7 @@ type Config struct {
 	Debounce               int
 	TriggerCharacters      []string
 	NumSuggestions         int
+	CompletionContext      bool
 	LogFile                string
 	FetchTimeout           int
 	ActionTimeout          int
@@ -50,6 +51,7 @@ func DefaultConfig() *Config {
 		Debounce:               200,
 		TriggerCharacters:      []string{"{", "(", " "},
 		NumSuggestions:         1,
+		CompletionContext:      false, // A/B on 45 real cases: no accuracy gain, +~7% latency; opt-in
 		FetchTimeout:           15000,
 		ActionTimeout:          120000,
 		CompletionTimeout:      15000,
@@ -79,6 +81,7 @@ func Load() *Config {
 	bryantEndpoint := flag.String("bryant-endpoint", getEnvOrDefault("BRYANT_ENDPOINT", cfg.BryantEndpoint), "BryantGPT OpenAI-compatible endpoint")
 	debounce := flag.Int("debounce", getEnvOrDefaultInt("DEBOUNCE", cfg.Debounce), "Debounce delay (ms)")
 	triggerChars := flag.String("trigger-chars", getEnvOrDefault("TRIGGER_CHARACTERS", "{||(|| "), "Completion trigger characters (separated by ||)")
+	completionContext := flag.Bool("completion-context", getEnvOrDefaultBool("COMPLETION_CONTEXT", cfg.CompletionContext), "Send .helix-assist.md and imported local files with completions")
 	numSuggestions := flag.Int("num-suggestions", getEnvOrDefaultInt("NUM_SUGGESTIONS", cfg.NumSuggestions), "Number of suggestions")
 	logFile := flag.String("log-file", getEnvOrDefault("LOG_FILE", "~/.cache/helix-assist.log"), "Log file path")
 	fetchTimeout := flag.Int("fetch-timeout", getEnvOrDefaultInt("FETCH_TIMEOUT", cfg.FetchTimeout), "Fetch timeout (ms)")
@@ -110,6 +113,7 @@ func Load() *Config {
 	cfg.Debounce = *debounce
 	cfg.TriggerCharacters = strings.Split(*triggerChars, "||")
 	cfg.NumSuggestions = *numSuggestions
+	cfg.CompletionContext = *completionContext
 	cfg.LogFile = *logFile
 	cfg.FetchTimeout = *fetchTimeout
 	cfg.ActionTimeout = *actionTimeout
