@@ -230,12 +230,14 @@ func run(args []string) (string, error) {
 		if o.text == "" {
 			return "", fmt.Errorf("ask needs a question")
 		}
-		cur := max(o.line-1, 0)
-		user := "Question: " + o.text + "\n\n" + fileContext(o, lines, cur, cur)
+		user := "Question: " + o.text + "\n\n" + fileContext(o, lines, -1, -1)
+		if o.line > 0 {
+			user += fmt.Sprintf("Cursor is on line %d.\n\n", o.line)
+		}
 		if sel := stdinText(); strings.TrimSpace(sel) != "" {
 			user += "Selected code:\n" + sel
 		}
-		out, err := ask(o.model, "Lines marked TARGET START/END are cursor markers, not file content; never mention them. Answer briefly (under ~10 lines) in plain text. Wrap lines at 80 columns. No markdown: no headings, bold, or code fences; indent code with 2 spaces.", user, 2000)
+		out, err := ask(o.model, "Answer briefly (under ~10 lines) in plain text. Wrap lines at 80 columns. No markdown: no headings, bold, or code fences; indent code with 2 spaces.", user, 2000)
 		if err != nil {
 			return "", err
 		}
