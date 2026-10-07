@@ -125,3 +125,36 @@ func TestTestPath(t *testing.T) {
 		}
 	}
 }
+
+func TestEnclosingBlockUncapped(t *testing.T) {
+	src := []string{"def f():"}
+	for i := 0; i < 1600; i++ {
+		src = append(src, "    x = 1")
+	}
+	if s, e := EnclosingBlock(src, 1550); s != 0 || e != 1600 {
+		t.Fatalf("got %d-%d", s, e)
+	}
+}
+
+func TestDuplicateTestsJS(t *testing.T) {
+	ex := "describe('math', () => {\n  it.only(\"adds numbers\", () => {});\n})\n"
+	for _, code := range []string{"test('adds numbers', () => {});", "  it.skip(`adds numbers`, () => {})", "describe(\"math\", () => {})"} {
+		if DuplicateTests(code, ex) == "" {
+			t.Errorf("missed duplicate %q", code)
+		}
+	}
+	if d := DuplicateTests("it('subtracts', () => {})", ex); d != "" {
+		t.Fatalf("false positive %q", d)
+	}
+}
+
+func TestLeadingInstructions(t *testing.T) {
+	src := lines("x = 1\n# note\n# ai: add docstring\ndef f():\n    pass")
+	got := LeadingInstructions(src, 3)
+	if len(got) != 1 || got[0].Line != 2 {
+		t.Fatalf("got %+v", got)
+	}
+	if got := LeadingInstructions(lines("# ai: old\ny = 1\ndef f():\n    pass"), 2); len(got) != 0 {
+		t.Fatalf("crossed code: %+v", got)
+	}
+}
