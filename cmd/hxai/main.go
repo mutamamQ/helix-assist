@@ -1,7 +1,8 @@
 // hxai: AI helpers for Helix shell commands (:pipe, :insert-output, :sh).
 //
-// Helix 25.07.1 shows any stderr output or non-zero exit as an error and applies
-// no edit, so on success we write ONLY the result to stdout and nothing to stderr.
+// Helix 25.07.1 inserts stderr into the buffer for :pipe/:insert-output, and
+// aborts the edit on a non-zero exit with empty stderr. So: result on stdout,
+// errors logged to ~/.cache/hxai.log + exit 1 (stderr only on a terminal).
 package main
 
 import (
@@ -70,6 +71,16 @@ func parseArgs(args []string) (o opts, err error) {
 		switch name {
 		case "--file":
 			o.file = next()
+			// Helix doesn't quote %{buffer_name}: glue following words while that names a real file.
+			for j := i + 1; j < len(args) && err == nil; j++ {
+				if _, e := os.Stat(o.file); e == nil {
+					break
+				}
+				if _, e := os.Stat(o.file + " " + args[j]); e == nil {
+					o.file += " " + args[j]
+					i = j
+				}
+			}
 		case "--lang":
 			o.lang = next()
 		case "--line":
@@ -83,6 +94,9 @@ func parseArgs(args []string) (o opts, err error) {
 		case "--fast":
 			o.model = modelFast
 		default:
+			if strings.HasPrefix(a, "--") {
+				return o, fmt.Errorf("unknown flag %s", a)
+			}
 			words = append(words, a)
 		}
 		if err != nil {
@@ -201,6 +215,9 @@ func run(args []string) (string, error) {
 			return "", fmt.Errorf("edit needs an instruction")
 		}
 		in := stdinText()
+		if strings.TrimSpace(in) == "" {
+			return "", fmt.Errorf("nothing selected")
+		}
 		user := fmt.Sprintf("Instruction: %s\n\n%s", o.text, fileContext(o, lines, -1, -1))
 		if o.lang != "" {
 			user += "Language: " + o.lang + "\n\n"
@@ -210,7 +227,7 @@ func run(args []string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return finish(out, in), nil
+		return nonEmpty(finish(out, in))
 	case "gen":
 		if o.text == "" {
 			return "", fmt.Errorf("gen needs an instruction")
@@ -221,11 +238,11 @@ func run(args []string) (string, error) {
 			base = lines[cur]
 		}
 		user := fmt.Sprintf("Instruction: %s\n\n%s", o.text, fileContext(o, lines, cur, cur))
-		out, err := ask(o.model, "You write NEW code to be inserted at the cursor line (the marked line). Reply with ONLY the code to insert: no markdown fences, no commentary, do not repeat existing code.", user, 8000)
+		out, err := ask(o.model, "You write NEW code that will be inserted on new lines directly AFTER the marked line. Reply with ONLY the new code, indented correctly for that position: no markdown fences, no commentary, never repeat the marked line or other existing code.", user, 8000)
 		if err != nil {
 			return "", err
 		}
-		return finish(out, base+"\n"), nil
+		return nonEmpty(finish(out, base+"\n"))
 	case "ask":
 		if o.text == "" {
 			return "", fmt.Errorf("ask needs a question")
@@ -248,7 +265,7 @@ func run(args []string) (string, error) {
 			return "", err
 		}
 		if len(d) > maxDiff {
-			d = d[:maxDiff] + "\n... (diff truncated)"
+			d = strings.ToValidUTF8(d[:maxDiff], "") + "\n... (diff truncated)"
 		}
 		out, err := ask(o.model, "Write a git commit message for the diff: imperative subject under 72 chars, blank line, short body only if needed. Reply with ONLY the message, no fences.", d, 600)
 		if err != nil {
@@ -267,8 +284,11 @@ func run(args []string) (string, error) {
 		if model == "" {
 			model = keysModel
 		}
-		cfg, _ := os.UserHomeDir()
-		b, _ := os.ReadFile(filepath.Join(cfg, ".config/helix/config.toml"))
+		cfg, err := os.UserConfigDir() // honours XDG_CONFIG_HOME
+		if err != nil {
+			return "", err
+		}
+		b, _ := os.ReadFile(filepath.Join(cfg, "helix", "config.toml"))
 		out, err := ask(model, keysSystem(helixdocs.All(), keyRemaps(string(b))), q, 800)
 		if err != nil {
 			return "", err
@@ -276,6 +296,14 @@ func run(args []string) (string, error) {
 		return tidyAnswer(out), nil
 	}
 	return "", fmt.Errorf("unknown command %q (try --help)", cmd)
+}
+
+// nonEmpty refuses to replace the user's selection with a blank model reply.
+func nonEmpty(s string) (string, error) {
+	if strings.TrimSpace(s) == "" {
+		return "", fmt.Errorf("model returned nothing")
+	}
+	return s, nil
 }
 
 // tidyAnswer drops fence lines (the :sh popup is already a ```sh block).
@@ -289,15 +317,36 @@ func tidyAnswer(s string) string {
 	return strings.Join(keep, "\n") + "\n"
 }
 
+// popupCmds print to the :sh popup, so errors can go to stdout there.
+var popupCmds = map[string]bool{"ask": true, "keys": true, "doc": true}
+
 func main() {
 	out, err := run(os.Args[1:])
-	if err != nil {
-		msg := strings.Join(strings.Fields(err.Error()), " ")
-		if len(msg) > 200 {
-			msg = msg[:200]
+	if err == nil {
+		fmt.Print(out)
+		return
+	}
+	msg := "hxai: " + strings.Join(strings.Fields(err.Error()), " ")
+	if len(os.Args) > 1 && popupCmds[os.Args[1]] {
+		fmt.Println(msg)
+		return
+	}
+	// Helix 25.07.1 :pipe/:insert-output insert stderr INTO the buffer, but a
+	// non-zero exit with empty stderr aborts the edit. So: log, keep stderr empty.
+	if dir, e := os.UserCacheDir(); e == nil {
+		if f, e := os.OpenFile(filepath.Join(dir, "hxai.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); e == nil {
+			fmt.Fprintf(f, "%s %s\n", time.Now().Format(time.RFC3339), msg)
+			f.Close()
 		}
-		fmt.Fprintln(os.Stderr, "hxai: "+msg)
+	}
+	if !isTerminal(os.Stderr) {
 		os.Exit(1)
 	}
-	fmt.Print(out)
+	fmt.Fprintln(os.Stderr, msg) // interactive use: show it
+	os.Exit(1)
+}
+
+func isTerminal(f *os.File) bool {
+	st, err := f.Stat()
+	return err == nil && st.Mode()&os.ModeCharDevice != 0
 }

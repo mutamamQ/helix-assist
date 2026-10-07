@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -15,6 +16,21 @@ func TestParseArgs(t *testing.T) {
 	}
 	if _, err := parseArgs([]string{"--line", "x"}); err == nil {
 		t.Fatal("want error")
+	}
+	if _, err := parseArgs([]string{"q", "--verbose"}); err == nil {
+		t.Fatal("unknown flag accepted")
+	}
+	dir := t.TempDir()
+	spaced := dir + "/my file.py"
+	if err := os.WriteFile(spaced, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	o, err = parseArgs([]string{"--file", dir + "/my", "file.py", "add", "types"})
+	if err != nil || o.file != spaced || o.text != "add types" {
+		t.Fatalf("spaced path: %+v %v", o, err)
+	}
+	if _, err := nonEmpty(" \n"); err == nil {
+		t.Fatal("blank reply accepted")
 	}
 }
 

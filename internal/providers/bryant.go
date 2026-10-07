@@ -190,7 +190,23 @@ func (p *BryantProvider) Raw(ctx context.Context, model, system, user string, ma
 		model = p.chatModel
 	}
 	temp := 0.2
-	return p.chat(ctx, model, system, user, maxTokens, &temp)
+	// The bridge trims leading whitespace off replies, which destroys the first
+	// line's indentation. A sentinel first line keeps it intact.
+	out, err := p.chat(ctx, model, system+"\n\nStart your reply with a line containing only "+sentinel+" and then the answer.", user, maxTokens, &temp)
+	return stripSentinel(out), err
+}
+
+const sentinel = "@@@"
+
+func stripSentinel(s string) string {
+	t := strings.TrimLeft(s, " \t\r\n")
+	if rest, ok := strings.CutPrefix(t, sentinel); ok {
+		rest = strings.TrimLeft(rest, " \t")
+		rest, _ = strings.CutPrefix(rest, "\r")
+		rest, _ = strings.CutPrefix(rest, "\n")
+		return rest
+	}
+	return s
 }
 
 // CleanCodeOutput is the exported fence stripper used by handlers and hxai.
